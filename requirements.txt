@@ -1,0 +1,7 @@
+numpy==1.26.4
+scipy==1.11.4
+scikit-learn==1.3.2
+groq>=1.6.0
+psycopg2-binary
+sentence-transformers
+boto3

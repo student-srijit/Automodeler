@@ -1,0 +1,47 @@
+{
+  "table_name": "sample_table",
+  "columns": [
+    {
+      "column_name": "id",
+      "inferred_type": "UUID",
+      "uniqueness_ratio": 1.0,
+      "is_pk_candidate": true,
+      "null_count": 0,
+      "total_count": 10000
+    },
+    {
+      "column_name": "user_name",
+      "inferred_type": "STRING",
+      "uniqueness_ratio": 0.98,
+      "is_pk_candidate": false,
+      "null_count": 5,
+      "total_count": 10000
+    },
+    {
+      "column_name": "score",
+      "inferred_type": "FLOAT8",
+      "uniqueness_ratio": 0.75,
+      "is_pk_candidate": false,
+      "null_count": 12,
+      "total_count": 10000
+    },
+    {
+      "column_name": "event_count",
+      "inferred_type": "INT8",
+      "uniqueness_ratio": 0.45,
+      "is_pk_candidate": false,
+      "null_count": 0,
+      "total_count": 10000
+    },
+    {
+      "column_name": "created_at",
+      "inferred_type": "TIMESTAMP",
+      "uniqueness_ratio": 0.99,
+      "is_pk_candidate": false,
+      "null_count": 0,
+      "total_count": 10000
+    }
+  ],
+  "source": "cloudwatch_lambda_ingestion_agent",
+  "profile_version": "1.0"
+}
