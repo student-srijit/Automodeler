@@ -138,7 +138,7 @@ def profile_csv(bucket, key):
         profile_columns.append(col_profile)
 
     profile = {
-        "table_name":            re.sub(r'[^a-z0-9_]', '_', key.split('/')[-1].replace('.csv', '').lower()),
+        "table_name":            "submission",
         "total_rows":            total_rows,
         "duplicate_rows":        len(duplicate_indices),
         "columns":               profile_columns,
@@ -221,18 +221,17 @@ def generate_schema(profile):
 # ═══════════════════════════════════════════════════════════════════
 # STAGE 4: COCKROACHDB PROVISIONING
 # ═══════════════════════════════════════════════════════════════════
-
 def deploy_schema(schema):
     conn = get_db_conn()
     with conn.cursor() as cur:
-        tables = [t["table_name"] for t in schema["tables"]]
-        for tbl in reversed(tables):
-            print(f"Dropping: {tbl}")
-            cur.execute(f"DROP TABLE IF EXISTS {tbl} CASCADE;")
         for tbl_def in schema["tables"]:
-            print(f"Creating table: {tbl_def['table_name']}")
-            cur.execute(tbl_def["create_table_sql"])
-            cur.execute(tbl_def["create_vector_index_sql"])
+            print(f"Ensuring table exists: {tbl_def['table_name']}")
+            create_sql = tbl_def["create_table_sql"].replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
+            cur.execute(create_sql)
+            try:
+                cur.execute(tbl_def["create_vector_index_sql"])
+            except Exception as e:
+                print(f"Vector index warning (may already exist): {e}")
             for idx_sql in tbl_def.get("create_indexes_sql", []):
                 if idx_sql and idx_sql.strip():
                     try:
@@ -290,10 +289,10 @@ def transform_rows(headers, rows, profile_columns, duplicate_indices):
     return transformed
 
 # ═══════════════════════════════════════════════════════════════════
-# STAGE 6: BATCH LOAD WITH VECTOR EMBEDDINGS
+# STAGE 6: BATCH LOAD WITH VECTOR EMBEDDINGS (batched encoding)
 # ═══════════════════════════════════════════════════════════════════
 
-def embed_and_insert(schema, headers, transformed_rows, batch_size=100):
+def embed_and_insert(schema, headers, transformed_rows, batch_size=500):
     model         = get_model()
     conn          = get_db_conn()
     primary_table = schema["tables"][0]["table_name"]
@@ -301,14 +300,22 @@ def embed_and_insert(schema, headers, transformed_rows, batch_size=100):
     placeholders  = ", ".join(["%s"] * len(headers)) + ", %s"
     insert_sql    = f"INSERT INTO {primary_table} ({col_names}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
 
+    print(f"STAGE 6: Encoding {len(transformed_rows)} rows in chunks...")
+    texts = [" | ".join([f"{k}: {v}" for k, v in row_dict.items()]) for row_dict in transformed_rows]
+    vectors = []
+    chunk_size = 500
+    for i in range(0, len(texts), chunk_size):
+        chunk = texts[i:i+chunk_size]
+        chunk_vectors = model.encode(chunk, batch_size=64, show_progress_bar=False)
+        vectors.extend(chunk_vectors)
+        print(f"STAGE 6: Encoded {min(i+chunk_size, len(texts))}/{len(texts)} rows...")
+    print(f"STAGE 6: Encoding complete. Inserting into DB...")
     inserted = 0
     batch    = []
 
     with conn.cursor() as cur:
-        for row_dict in transformed_rows:
-            text   = " | ".join([f"{k}: {v}" for k, v in row_dict.items()])
-            vector = model.encode(text).tolist()
-            values = tuple([row_dict.get(h, 'UNKNOWN') for h in headers] + [str(vector)])
+        for row_dict, vector in zip(transformed_rows, vectors):
+            values = tuple([row_dict.get(h, 'UNKNOWN') for h in headers] + [str(vector.tolist())])
             batch.append(values)
 
             if len(batch) >= batch_size:
