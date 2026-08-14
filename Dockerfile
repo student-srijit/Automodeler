@@ -1,7 +1,12 @@
 FROM public.ecr.aws/lambda/python:3.11
 
 # Install build tools (needed by some packages) and dependencies
-RUN yum install -y gcc gcc-c++ && yum clean all
+RUN yum install -y gcc gcc-c++ postgresql-devel tar gzip || yum install -y gcc gcc-c++ libpq-devel tar gzip && yum clean all
+
+# Install CockroachDB ccloud CLI
+RUN curl -sL https://binaries.cockroachdb.com/ccloud/ccloud_linux-amd64_0.3.0.tar.gz | tar -xz && \
+    mv ccloud /usr/local/bin/ccloud && \
+    chmod +x /usr/local/bin/ccloud
 
 COPY requirements.txt .
 RUN pip install --upgrade pip --no-cache-dir && \

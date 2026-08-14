@@ -6,6 +6,10 @@ import re
 import hashlib
 import statistics
 import psycopg2
+import subprocess
+import traceback
+import time
+import base64
 from groq import Groq
 import boto3
 
@@ -386,54 +390,228 @@ def autonomous_test_and_optimize(schema, profile):
     conn.close()
 
 # ═══════════════════════════════════════════════════════════════════
+# AGENT LOGIC
+# ═══════════════════════════════════════════════════════════════════
+
+def provision_agent_cluster():
+    print(">>> Provisioning CockroachDB Serverless Cluster via ccloud CLI...")
+    try:
+        # Note: requires CCLOUD_API_KEY environment variable to be set in Lambda
+        result = subprocess.run(
+            ["ccloud", "cluster", "create", "serverless", "automodeler-memory", "--cloud", "AWS", "--spend-limit", "0", "-o", "json"],
+            capture_output=True, text=True, check=True
+        )
+        data = json.loads(result.stdout)
+        conn_str = data.get("connection_string")
+        if conn_str:
+            conn_str = conn_str.replace("sslmode=verify-full", "sslmode=require")
+            os.environ["DATABASE_URL"] = conn_str
+            print("Successfully provisioned cluster and updated DATABASE_URL.")
+            return conn_str
+        else:
+            raise ValueError("Connection string not found in ccloud output.")
+    except Exception as e:
+        print(f"Failed to provision cluster: {e}")
+        if isinstance(e, subprocess.CalledProcessError):
+            print(f"ccloud stderr: {e.stderr}")
+        raise e
+
+def handle_agent_chat(user_query, db_url):
+    print(f">>> Handling chat query: {user_query}")
+    start_time = time.time()
+    
+    if db_url:
+        os.environ["DATABASE_URL"] = db_url
+
+    # 1. Embed user query
+    model = get_model()
+    query_vector = model.encode(user_query).tolist()
+    
+    # 2. Find table name dynamically
+    conn = get_db_conn()
+    table_name = None
+    with conn.cursor() as cur:
+        cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' LIMIT 1;")
+        res = cur.fetchone()
+        if res:
+            table_name = res[0]
+            
+    if not table_name:
+        return {"answer": "I don't have any data loaded in my memory yet."}
+        
+    # 3. Vector search & Indexes
+    context_rows = []
+    active_indexes = []
+    try:
+        with conn.cursor() as cur:
+            # Fetch actual query execution plan
+            explain_sql = f"EXPLAIN SELECT * FROM {table_name} ORDER BY embedding <-> %s::vector LIMIT 5;"
+            cur.execute(explain_sql, (str(query_vector),))
+            plan = "Execution Plan: "
+            for row in cur.fetchall():
+                line = row[0]
+                if 'vector search' in line:
+                    plan += "Vector KNN Search -> "
+                elif 'lookup join' in line:
+                    plan += "Row Lookup Join -> "
+                elif 'table:' in line:
+                    idx = line.split('@')[-1].strip()
+                    plan += f"Index({idx}) "
+            active_indexes = [plan.strip()]
+                
+            # Vector search
+            cur.execute(f"SELECT * FROM {table_name} ORDER BY embedding <-> %s::vector LIMIT 5;", (str(query_vector),))
+            cols = [desc[0] for desc in cur.description]
+            for row in cur.fetchall():
+                row_dict = dict(zip(cols, row))
+                if 'embedding' in row_dict:
+                    del row_dict['embedding']
+                context_rows.append(row_dict)
+    except Exception as e:
+        print(f"Vector search failed: {e}")
+    finally:
+        conn.close()
+        
+    # 4. Groq response
+    client = Groq(api_key=os.environ['GROQ_API_KEY'])
+    prompt = f"User Question: {user_query}\n\nContext from Database:\n{json.dumps(context_rows, indent=2)}\n\nAnswer the question based ONLY on the context provided. Format your response beautifully using Markdown. Use bullet points for listing products, bold text for product names, and short paragraphs to make it highly readable and organized for a normal user."
+    
+    response = client.chat.completions.create(
+        messages=[{"role": "user", "content": prompt}],
+        model="llama-3.3-70b-versatile",
+        temperature=0.1
+    )
+    answer = response.choices[0].message.content.strip()
+    latency_ms = int((time.time() - start_time) * 1000)
+    
+    return {
+        "answer": answer, 
+        "context_used": context_rows,
+        "metrics": {
+            "latency_ms": latency_ms,
+            "active_indexes": active_indexes
+        }
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
 # MAIN HANDLER
 # ═══════════════════════════════════════════════════════════════════
 
 def lambda_handler(event, context):
-    bucket = event['Records'][0]['s3']['bucket']['name']
-    key    = urllib.parse.unquote_plus(
-        event['Records'][0]['s3']['object']['key'], encoding='utf-8'
-    )
-    print(f"\n{'='*60}")
-    print(f"AutoModeler Pipeline — s3://{bucket}/{key}")
-    print(f"{'='*60}\n")
-
-    try:
-        print(">>> STAGE 1: Advanced Data Profiling...")
-        profile, headers, rows, dupe_idx = profile_csv(bucket, key)
-
-        print(">>> STAGE 3: Cluster Sizing...")
-        cluster_plan = size_cluster(profile)
-
-        print(">>> STAGE 2: AI Schema Generation (multi-table normalized)...")
-        schema = generate_schema(profile)
-
-        print(">>> STAGE 4: CockroachDB Provisioning (multi-table DDL)...")
-        deploy_schema(schema)
-
-        print(">>> STAGE 5: Data Transformation (clean + impute + deduplicate)...")
-        transformed = transform_rows(headers, rows, profile["columns"], dupe_idx)
-
-        print(">>> STAGE 6: Batch Embedding & Load...")
-        rows_inserted = embed_and_insert(schema, headers, transformed)
-
-        print(">>> STAGE 7: Autonomous Query Testing & Index Optimization...")
-        autonomous_test_and_optimize(schema, profile)
-
-        result = {
-            'statusCode': 200,
-            'body': json.dumps({
-                'pipeline':           'complete',
-                'stages_executed':    [1, 2, 3, 4, 5, 6, 7],
-                'tables_created':     [t["table_name"] for t in schema["tables"]],
-                'rows_ingested':      rows_inserted,
-                'duplicates_removed': profile["duplicate_rows"],
-                'cluster_plan':       cluster_plan
-            })
+    print("Received event:", json.dumps(event)[:200])
+    
+    # ROUTE 1: API Gateway (Chat Mode)
+    if 'httpMethod' in event or 'requestContext' in event:
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Allow-Methods': 'OPTIONS,POST,GET'
         }
-        print(f"\nPIPELINE COMPLETE:\n{json.dumps(result, indent=2)}")
-        return result
+        if event.get('httpMethod') == 'OPTIONS':
+            return {'statusCode': 200, 'headers': headers, 'body': ''}
+            
+        try:
+            body = json.loads(event.get('body', '{}'))
+            action = body.get('action', 'chat')
+            
+            if action == 'upload':
+                filename = body.get('filename')
+                content_b64 = body.get('content')
+                bucket = body.get('bucket')
+                
+                if not filename or not content_b64 or not bucket:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Missing filename, content, or bucket for upload'})}
+                
+                csv_bytes = base64.b64decode(content_b64)
+                s3.put_object(Bucket=bucket, Key=filename, Body=csv_bytes)
+                
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'status': 'success', 'message': f'Uploaded {filename} to {bucket}. Background ETL agent triggered.'})
+                }
+                
+            # action == 'chat'
+            user_query = body.get('query', '')
+            bucket = body.get('bucket', '')
+            
+            if not user_query or not bucket:
+                return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Missing query or bucket'})}
+                
+            try:
+                # Fetch DB URL from S3 state
+                state_response = s3.get_object(Bucket=bucket, Key="agent_memory_state.txt")
+                db_url = state_response['Body'].read().decode('utf-8').strip()
+            except Exception as e:
+                return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Could not find database state. Have you uploaded a dataset yet?'})}
+                
+            response = handle_agent_chat(user_query, db_url)
+            
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps(response)
+            }
+        except Exception as e:
+            traceback.print_exc()
+            return {'statusCode': 500, 'headers': headers, 'body': json.dumps({'error': str(e)})}
 
-    except Exception as e:
-        print(f"Pipeline failed: {str(e)}")
-        raise e
+    # ROUTE 2: S3 Upload (ETL & Provisioning Mode)
+    elif 'Records' in event and 's3' in event['Records'][0]:
+        bucket = event['Records'][0]['s3']['bucket']['name']
+        key    = urllib.parse.unquote_plus(
+            event['Records'][0]['s3']['object']['key'], encoding='utf-8'
+        )
+        print(f"\n{'='*60}")
+        print(f"AutoModeler Agent ETL — s3://{bucket}/{key}")
+        print(f"{'='*60}\n")
+
+        try:
+            # Autonomous Provisioning (Bypass if TEST_DB_URL is set in .env)
+            if os.environ.get('TEST_DB_URL'):
+                print(">>> Using TEST_DB_URL from environment for local testing...")
+                new_db_url = os.environ.get('TEST_DB_URL').replace("sslmode=verify-full", "sslmode=require")
+                os.environ['DATABASE_URL'] = new_db_url
+            else:
+                new_db_url = provision_agent_cluster()
+            
+            print(f">>> Saving agent memory state to s3://{bucket}/agent_memory_state.txt")
+            s3.put_object(Bucket=bucket, Key="agent_memory_state.txt", Body=new_db_url.encode('utf-8'))
+            
+            print(">>> STAGE 1: Advanced Data Profiling...")
+            profile, headers, rows, dupe_idx = profile_csv(bucket, key)
+
+            print(">>> STAGE 3: Cluster Sizing...")
+            cluster_plan = size_cluster(profile)
+
+            print(">>> STAGE 2: AI Schema Generation (multi-table normalized)...")
+            schema = generate_schema(profile)
+
+            print(">>> STAGE 4: CockroachDB Provisioning (multi-table DDL)...")
+            deploy_schema(schema)
+
+            print(">>> STAGE 5: Data Transformation (clean + impute + deduplicate)...")
+            transformed = transform_rows(headers, rows, profile["columns"], dupe_idx)
+
+            print(">>> STAGE 6: Batch Embedding & Load...")
+            rows_inserted = embed_and_insert(schema, headers, transformed)
+
+            print(">>> STAGE 7: Autonomous Query Testing & Index Optimization...")
+            autonomous_test_and_optimize(schema, profile)
+
+            result = {
+                'statusCode': 200,
+                'body': json.dumps({
+                    'pipeline':           'complete',
+                    'new_database_url':   new_db_url,
+                    'tables_created':     [t["table_name"] for t in schema["tables"]],
+                    'rows_ingested':      rows_inserted
+                })
+            }
+            print(f"\nPIPELINE COMPLETE:\n{json.dumps(result, indent=2)}")
+            return result
+
+        except Exception as e:
+            traceback.print_exc()
+            raise e

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Automodeler Data Agent</title>
+        <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+
+    <div class="sidebar">
+        <h2>Connection Settings</h2>
+        <div class="input-group">
+            <label for="apiUrl">Lambda API Gateway URL</label>
+            <input type="text" id="apiUrl" placeholder="https://....execute-api.region.amazonaws.com/prod">
+        </div>
+        
+        <div class="section-divider"></div>
+        
+        <h2>Upload Dataset (S3)</h2>
+        <div class="input-group">
+            <label for="s3Bucket">AWS S3 Bucket Name</label>
+            <input type="text" id="s3Bucket" placeholder="my-hackathon-bucket">
+        </div>
+        <div class="input-group">
+            <input type="file" id="csvFile" accept=".csv">
+        </div>
+        <button class="btn" id="uploadBtn" onclick="uploadFile()">Upload & Analyze</button>
+        <div id="uploadStatus" style="font-size: 0.8rem; color: var(--success); margin-top: 5px; display: none;"></div>
+
+        <p style="font-size: 0.8rem; color: #94a3b8; margin-top: auto;">
+            <strong>Note:</strong> Uploading will autonomously provision a CockroachDB Serverless cluster in the background.
+        </p>
+    </div>
+
+    <div class="main-chat">
+        <div class="chat-header">
+            <h1>Automodeler Agent</h1>
+        </div>
+        
+        <div class="chat-history" id="chatHistory">
+            <div class="message bot">
+                Hello! I am your Autonomous Data Agent. My memory is powered by CockroachDB Vector Search. What would you like to know about your data?
+            </div>
+        </div>
+        
+        <div class="loading" id="loadingIndicator">
+            Thinking & searching database...
+        </div>
+
+        <div class="chat-input-container">
+            <input type="text" id="queryInput" placeholder="Ask a question about your uploaded dataset..." autocomplete="off">
+            <button id="sendBtn">Send</button>
+        </div>
+    </div>
+
+    <script>
+        const queryInput = document.getElementById('queryInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const chatHistory = document.getElementById('chatHistory');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+
+
+        // Load from localStorage
+        if (localStorage.getItem('apiUrl')) {
+            document.getElementById('apiUrl').value = localStorage.getItem('apiUrl');
+        }
+        if (localStorage.getItem('s3Bucket')) {
+            document.getElementById('s3Bucket').value = localStorage.getItem('s3Bucket');
+        }
+
+        // Allow pressing Enter to send
+        queryInput.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+        sendBtn.addEventListener('click', sendMessage);
+
+        function toggleContext(id) {
+            const el = document.getElementById(id);
+            el.style.display = (el.style.display === 'none' || el.style.display === '') ? 'block' : 'none';
+        }
+
+        async function uploadFile() {
+            const apiUrl = document.getElementById('apiUrl').value.trim();
+            const bucket = document.getElementById('s3Bucket').value.trim();
+            const fileInput = document.getElementById('csvFile');
+            const statusDiv = document.getElementById('uploadStatus');
+
+            if (!apiUrl || !bucket || fileInput.files.length === 0) {
+                alert("Please provide the API URL, S3 Bucket name, and select a CSV file.");
+                return;
+            }
+            localStorage.setItem('apiUrl', apiUrl);
+            localStorage.setItem('s3Bucket', bucket);
+
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = async function(e) {
+                // Get base64 string without the data URL prefix
+                const base64String = e.target.result.split(',')[1];
+                
+                statusDiv.style.display = 'block';
+                statusDiv.style.color = '#94a3b8';
+                statusDiv.textContent = 'Uploading to S3...';
+
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            action: 'upload',
+                            filename: file.name,
+                            content: base64String,
+                            bucket: bucket
+                        })
+                    });
+
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        statusDiv.style.color = '#10b981';
+                        statusDiv.textContent = 'Success! Background ETL started. You can monitor Lambda logs for the new database URL.';
+                        appendMessage('bot', `I have received ${file.name}. My DevOps agent is provisioning a cluster and analyzing the schema in the background!`);
+                    } else {
+                        statusDiv.style.color = '#ef4444';
+                        statusDiv.textContent = `Error: ${data.error || 'Upload failed'}`;
+                    }
+                } catch (error) {
+                    statusDiv.style.color = '#ef4444';
+                    statusDiv.textContent = `Network Error: ${error.message}`;
+                }
+            };
+            
+            // Read as data URL to easily extract base64
+            reader.readAsDataURL(file);
+        }
+
+        async function sendMessage() {
+            const query = queryInput.value.trim();
+            const apiUrl = document.getElementById('apiUrl').value.trim();
+            const bucket = document.getElementById('s3Bucket').value.trim();
+
+            if (!query) return;
+            if (!apiUrl || !bucket) {
+                alert("Please enter your Lambda API Gateway URL and S3 Bucket Name in the sidebar.");
+                return;
+            }
+            localStorage.setItem('apiUrl', apiUrl);
+            localStorage.setItem('s3Bucket', bucket);
+
+
+            appendMessage('user', query);
+            queryInput.value = '';
+            loadingIndicator.style.display = 'block';
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'chat',
+                        query: query,
+                        bucket: bucket
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    appendMessage('bot', data.answer, data.context_used, data.metrics);
+                } else {
+                    appendMessage('bot', `Error: ${data.error || 'Something went wrong.'}`);
+                }
+            } catch (error) {
+                appendMessage('bot', `Failed to connect to API: ${error.message}`);
+            } finally {
+                loadingIndicator.style.display = 'none';
+            }
+        }
+
+        function appendMessage(sender, text, context = null, metrics = null) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${sender}`;
+            
+            if (sender === 'bot') {
+                msgDiv.innerHTML = marked.parse(text);
+            } else {
+                msgDiv.textContent = text;
+            }
+            
+            if (sender === 'bot') {
+                // Add Metrics Badge
+                if (metrics) {
+                    const metricsDiv = document.createElement('div');
+                    metricsDiv.className = 'metrics-badge';
+                    
+                    const speedEl = document.createElement('div');
+                    speedEl.innerHTML = `<strong> Speed:</strong> ${metrics.latency_ms} ms (Search + Generation)`;
+                    
+                    const idxEl = document.createElement('div');
+                    const idxList = metrics.active_indexes ? metrics.active_indexes.join(', ') : 'None detected';
+                    idxEl.innerHTML = `<strong> Active CockroachDB Indexes:</strong> ${idxList}`;
+                    
+                    metricsDiv.appendChild(speedEl);
+                    metricsDiv.appendChild(idxEl);
+                    msgDiv.appendChild(metricsDiv);
+                }
+
+                // Add Context Toggle
+                if (context && context.length > 0) {
+                    const contextId = 'ctx-' + Date.now();
+                    
+                    const toggleBtn = document.createElement('div');
+                    toggleBtn.className = 'context-toggle';
+                    toggleBtn.textContent = 'View retrieved database rows';
+                    toggleBtn.onclick = () => toggleContext(contextId);
+                    
+                    const contextData = document.createElement('div');
+                    contextData.className = 'context-data';
+                    contextData.id = contextId;
+                    contextData.textContent = JSON.stringify(context, null, 2);
+                    
+                    msgDiv.appendChild(document.createElement('br'));
+                    msgDiv.appendChild(toggleBtn);
+                    msgDiv.appendChild(contextData);
+                }
+            }
+            
+            chatHistory.appendChild(msgDiv);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+    </script>
+</body>
+</html>
