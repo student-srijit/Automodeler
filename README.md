@@ -7,9 +7,13 @@ AutoModeler is an autonomous, event-driven AI agent that takes a raw CSV file, d
 We completely transformed a basic script into a **production-ready Serverless Architecture**:
 
 1. **Dual-Mode Event-Driven Architecture:** Converted the script into an AWS Lambda function. It now listens for S3 `ObjectCreated` events to trigger the background ETL, and API Gateway events to trigger real-time chat.
+
 2. **Decentralized State Memory:** The DevOps agent dynamically generates a new CockroachDB cluster and securely saves the new `DATABASE_URL` into an S3 file (`agent_memory_state.txt`). The Chat agent dynamically fetches this state, making the Lambda functions entirely stateless!
+
 3. **Dynamic EXPLAIN Plan Parsing:** Instead of statically listing table indexes, the AI agent literally queries the CockroachDB query optimizer (`EXPLAIN SELECT...`) to show you the *exact execution plan* (e.g., `Lookup Join -> Vector KNN Search`) used for every individual question.
+
 4. **Local Testing Simulation Suite:** Created `local_server.py` and `trigger_etl.py` to perfectly simulate AWS S3 and API Gateway locally on your Mac, so you can test the cloud architecture without actually deploying it.
+
 5. **Modern Glassmorphism UI:** Built a highly polished, responsive frontend (`index.html`) with beautiful typography, Markdown rendering (`marked.js`), and LocalStorage persistence.
 
 ## Architecture Pipeline
@@ -77,19 +81,49 @@ This script acts exactly like an AWS S3 trigger. It reads `large_sample.csv`, ru
 
 ---
 
-##  2. How to Deploy to AWS
+## ☁️ 2. How to Deploy to AWS
 
-*(For a detailed walkthrough of getting API keys, see `setup.md`)*
+Since you have already created the ECR repository and Lambda function, here is the exact deployment checklist. *(For a detailed walkthrough of generating the actual API keys, see `setup.md`)*
 
-1. **Push the Docker Container:** Use the AWS ECR push commands to upload the code to your `automodeler-lambda` repository.
-   - *Important:* Use `docker build --provenance=false -t automodeler-lambda .` to avoid image index errors.
-2. **Update Lambda:** Go to your Lambda function -> **Image** tab -> **Deploy new image**.
-3. **Configure Lambda:**
-   - Memory: `3008 MB`
-   - Timeout: `15 minutes`
-   - Add your Environment Variables (`GROQ_API_KEY`, `CCLOUD_API_KEY`).
-   - Give the Execution Role `AmazonS3FullAccess`.
-4. **Add the S3 Trigger:** Add a trigger for your S3 bucket with the `.csv` suffix.
+### Step A: Push the Docker Image to ECR
+Open your Mac Terminal, navigate to your project folder, and run these commands (replace the AWS account URL with your actual ECR URL):
+
+1. **Authenticate Docker with AWS:**
+   ```sh
+   aws ecr get-login-password --region <YOUR_REGION> | docker login --username AWS --password-stdin <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.<YOUR_REGION>.amazonaws.com
+   ```
+2. **Build the Image:** 
+   *(⚠️ Extremely Important: Do not use the default AWS build command on your Mac. You must use the `--provenance=false` flag to avoid image index errors on Apple Silicon).*
+   ```sh
+   docker build --provenance=false -t automodeler-lambda .
+   ```
+3. **Tag the Image:**
+   ```sh
+   docker tag automodeler-lambda:latest <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.<YOUR_REGION>.amazonaws.com/automodeler-lambda:latest
+   ```
+4. **Push the Image:**
+   ```sh
+   docker push <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.<YOUR_REGION>.amazonaws.com/automodeler-lambda:latest
+   ```
+
+### Step B: Update Lambda to Use the New Image
+1. Go to your Lambda function in the AWS Console.
+2. Click the **Image** tab (next to the Code tab).
+3. Click **Deploy new image**.
+4. Click **Browse images**, select your `automodeler-lambda` repository, select the image you just pushed (check the timestamp), and click **Save**.
+
+### Step C: Configure Lambda Environment Variables
+For the agent to operate autonomously, it needs credentials injected into the environment.
+1. Go to the **Configuration** tab -> **Environment variables** -> click **Edit**.
+2. Add the following keys:
+   - `GROQ_API_KEY`: Your Groq API key for Llama 3.3.
+   - `CCLOUD_API_KEY`: Your CockroachDB Service Account API Key (Required for the DevOps agent to autonomously spin up Serverless clusters).
+   - *(Note: Do NOT add `TEST_DB_URL` here. If you add it, it will bypass automatic cluster creation!)*
+
+### Step D: Hardware & Permissions
+1. **Memory & Timeout:** In **Configuration -> General configuration**, set Memory to `3008 MB` and Timeout to `15 min 0 sec`. (The AI embedding model will crash if memory is too low).
+2. **S3 Permissions:** In **Configuration -> Permissions**, click the Execution Role link and attach the `AmazonS3FullAccess` policy so the agent can read uploaded CSVs and write its memory state.
+3. **S3 Trigger:** Click **+ Add trigger** at the top of the Lambda page, select your S3 Bucket, and set the Suffix to `.csv`.
 
 ---
 
