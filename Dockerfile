@@ -10,7 +10,7 @@ ENV TORCH_HOME=/var/task/torch_cache
 RUN yum install -y gcc gcc-c++ cmake libsndfile tar gzip zlib-devel libjpeg-devel && yum clean all
 
 # Install CockroachDB ccloud CLI (CRITICAL for autonomous provisioning)
-RUN curl -sL https://binaries.cockroachdb.com/ccloud/ccloud_linux-amd64_0.3.0.tar.gz | tar -xz && \
+RUN curl -sL https://binaries.cockroachdb.com/ccloud/ccloud_linux-amd64_0.2.2.tar.gz | tar -xz && \
     mv ccloud /usr/local/bin/ccloud && \
     chmod +x /usr/local/bin/ccloud
 
