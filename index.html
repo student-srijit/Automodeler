@@ -1,250 +1,563 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AutoModeler — Mission Control</title>
-    <meta name="description" content="AutoModeler Orchestrator: Autonomous AI-powered ML pipeline orchestration platform">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoModeler — Mission Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+:root {
+  --void: #000000;
+  --deep: #05051a;
+  --panel-bg: rgba(8,8,28,0.93);
+  --panel-border: rgba(123,47,255,0.18);
+  --neon-violet: #7B2FFF;
+  --neon-violet-l: #9B5FFF;
+  --neon-cyan: #00F5FF;
+  --neon-green: #00FF9D;
+  --neon-red: #FF3D71;
+  --neon-amber: #FFB800;
+  --text-bright: #F0EFFF;
+  --text-primary: #C8C7E8;
+  --text-secondary: #7E7EA0;
+  --text-muted: #3D3D60;
+  --text-code: #9EF5FF;
+  --glow-violet: 0 0 20px rgba(123,47,255,0.35);
+  --glow-input: 0 0 0 2px rgba(123,47,255,0.25), 0 0 20px rgba(123,47,255,0.1);
+  --panel-w: 285px;
+  --topbar-h: 52px;
+  --font-head: 'Space Grotesk', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', Consolas, monospace;
+}
+
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+html,body { height: 100%; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--void);
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(123,47,255,0.35); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(123,47,255,0.65); }
+
+svg { width:16px; height:16px; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; fill:none; flex-shrink:0; }
+
+/* GRID BACKGROUND */
+.grid-bg {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(123,47,255,0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(123,47,255,0.045) 1px, transparent 1px);
+  background-size: 48px 48px;
+  animation: gridDrift 25s linear infinite;
+}
+@keyframes gridDrift { 0%{background-position:0 0} 100%{background-position:48px 48px} }
+
+.grid-bg::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: radial-gradient(ellipse 80% 60% at 50% 40%, transparent 20%, rgba(0,0,0,0.88) 100%);
+}
+
+/* BOOT OVERLAY */
+.boot-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 9999;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.6s ease;
+}
+.boot-overlay.boot-hidden { opacity: 0; pointer-events: none; }
+.boot-terminal { display:flex; flex-direction:column; gap:10px; font-family:var(--font-mono); font-size:13px; }
+.boot-line { opacity:0; color:var(--text-code); animation:bootFade 0.35s ease var(--d,0s) forwards; }
+@keyframes bootFade { from{opacity:0;transform:translateX(-10px)} to{opacity:1;transform:translateX(0)} }
+
+/* TOPBAR */
+.topbar {
+  position: relative;
+  z-index: 10;
+  height: var(--topbar-h);
+  background: rgba(3,3,20,0.98);
+  border-bottom: 1px solid var(--panel-border);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 20px;
+  flex-shrink: 0;
+}
+
+.topbar-brand { display:flex; align-items:center; gap:12px; flex-shrink:0; }
+
+.brand-icon svg { width:34px; height:34px; animation:glowPulse 4s ease infinite; }
+@keyframes glowPulse {
+  0%,100% { filter:drop-shadow(0 0 8px rgba(123,47,255,0.6)); }
+  50%      { filter:drop-shadow(0 0 14px rgba(0,245,255,0.7)); }
+}
+
+.brand-name {
+  font-family: var(--font-head);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  background: linear-gradient(135deg, #fff 0%, #9EF5FF 55%, #7B2FFF 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.brand-sub { font-family:var(--font-mono); font-size:9px; letter-spacing:0.14em; color:var(--text-muted); display:block; }
+
+.topbar-metrics { display:flex; gap:8px; margin-left:auto; }
+.metric-chip { display:flex; flex-direction:column; align-items:center; gap:1px; padding:5px 12px; background:rgba(123,47,255,0.06); border:1px solid rgba(123,47,255,0.14); border-radius:4px; }
+.metric-label { font-family:var(--font-mono); font-size:8px; letter-spacing:0.12em; color:var(--text-muted); text-transform:uppercase; }
+.metric-value { font-family:var(--font-mono); font-size:11px; font-weight:600; color:var(--neon-cyan); }
+
+.topbar-status { flex-shrink:0; }
+.status-badge { display:flex; align-items:center; gap:8px; padding:5px 14px; border-radius:20px; border:1px solid rgba(123,47,255,0.2); font-family:var(--font-mono); font-size:10px; font-weight:600; letter-spacing:0.1em; }
+.status-ring { width:7px; height:7px; border-radius:50%; background:var(--text-muted); position:relative; flex-shrink:0; }
+.status-ring::after { content:''; position:absolute; top:-3px; left:-3px; right:-3px; bottom:-3px; border-radius:50%; border:1px solid transparent; opacity:0; }
+.status-badge.ready { border-color:rgba(0,255,157,0.3); }
+.status-badge.ready .status-ring { background:var(--neon-green); }
+.status-badge.ready .status-ring::after { animation:pulseRing 2s ease infinite; border-color:var(--neon-green); }
+.status-badge.ready .status-text { color:var(--neon-green); }
+.status-badge.busy { border-color:rgba(255,184,0,0.3); }
+.status-badge.busy .status-ring { background:var(--neon-amber); }
+.status-badge.busy .status-ring::after { animation:pulseRing 1s ease infinite; border-color:var(--neon-amber); }
+.status-badge.busy .status-text { color:var(--neon-amber); }
+.status-badge.danger { border-color:rgba(255,61,113,0.3); }
+.status-badge.danger .status-ring { background:var(--neon-red); }
+.status-badge.danger .status-text { color:var(--neon-red); }
+@keyframes pulseRing { 0%{opacity:.8;transform:scale(1)} 100%{opacity:0;transform:scale(2.2)} }
+
+/* APP SHELL */
+.app-shell { display:flex; flex:1; min-height:0; position:relative; z-index:2; overflow:hidden; }
+
+/* COMMAND PANEL */
+.command-panel {
+  width: var(--panel-w);
+  min-width: var(--panel-w);
+  background: rgba(3,3,18,0.97);
+  border-right: 1px solid var(--panel-border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.panel-inner { padding:16px 14px; display:flex; flex-direction:column; flex:1; gap:0; }
+.panel-section { display:flex; flex-direction:column; gap:10px; padding:10px 0; }
+.section-tag { font-family:var(--font-mono); font-size:9px; letter-spacing:0.1em; color:var(--neon-violet); opacity:.65; text-transform:uppercase; }
+.panel-divider { height:1px; background:linear-gradient(90deg,transparent,var(--panel-border),transparent); margin:2px 0; }
+.field-group { display:flex; flex-direction:column; gap:8px; }
+.field { display:flex; flex-direction:column; gap:5px; }
+.field-label { font-size:10px; font-weight:600; letter-spacing:0.08em; color:var(--text-secondary); text-transform:uppercase; }
+.field-input-wrap { position:relative; display:flex; align-items:center; }
+.field-icon { position:absolute; left:9px; color:var(--text-muted); pointer-events:none; width:13px; height:13px; }
+.field-input-wrap input { width:100%; padding:7px 10px 7px 30px; background:rgba(123,47,255,0.05); border:1px solid rgba(123,47,255,0.15); border-radius:4px; color:var(--text-code); font-family:var(--font-mono); font-size:11px; outline:none; transition:all 0.12s ease; }
+.field-input-wrap input:focus { border-color:var(--neon-violet); background:rgba(123,47,255,0.09); box-shadow:var(--glow-input); }
+.field-input-wrap input::placeholder { color:var(--text-muted); }
+
+/* Drop Zone */
+.drop-zone { border:1px dashed rgba(123,47,255,0.28); border-radius:8px; padding:20px 12px; text-align:center; cursor:pointer; background:rgba(123,47,255,0.03); position:relative; transition:all 0.22s ease; overflow:hidden; }
+.drop-zone:hover, .drop-zone.drag-over { border-color:var(--neon-violet); background:rgba(123,47,255,0.08); box-shadow:0 0 18px rgba(123,47,255,0.15); }
+.drop-zone input[type="file"] { position:absolute; top:0; left:0; width:100%; height:100%; opacity:0; cursor:pointer; }
+.drop-zone-inner { display:flex; flex-direction:column; align-items:center; gap:6px; pointer-events:none; }
+.drop-icon-ring { width:40px; height:40px; border-radius:50%; border:1px solid rgba(123,47,255,0.35); display:flex; align-items:center; justify-content:center; color:var(--neon-violet); margin-bottom:4px; transition:all 0.22s ease; }
+.drop-zone:hover .drop-icon-ring { border-color:var(--neon-violet); box-shadow:0 0 14px rgba(123,47,255,0.3); color:var(--neon-cyan); }
+.drop-label { font-family:var(--font-mono); font-size:10px; letter-spacing:0.1em; color:var(--text-secondary); }
+.drop-or { color:var(--text-muted); font-size:9px; }
+.drop-formats { font-family:var(--font-mono); font-size:9px; color:var(--text-muted); letter-spacing:0.06em; }
+
+/* File List */
+.file-list { display:flex; flex-direction:column; gap:4px; }
+.file-chip { display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:4px; border:1px solid rgba(123,47,255,0.12); background:rgba(8,8,28,0.8); font-family:var(--font-mono); font-size:11px; transition:all 0.12s ease; animation:chipIn 0.2s ease; }
+@keyframes chipIn { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:translateX(0)} }
+.file-chip:hover { background:rgba(123,47,255,0.07); }
+.chip-icon svg { width:13px; height:13px; }
+.fc-csv .chip-icon { color:var(--neon-cyan); }
+.fc-zip .chip-icon { color:var(--neon-violet-l); }
+.fc-audio .chip-icon { color:var(--neon-amber); }
+.fc-image .chip-icon { color:var(--neon-green); }
+.chip-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-primary); }
+.chip-size { color:var(--text-muted); font-size:10px; }
+.chip-remove { background:transparent; border:none; color:var(--text-muted); cursor:pointer; display:flex; align-items:center; padding:2px; border-radius:3px; transition:all 0.12s ease; }
+.chip-remove:hover { color:var(--neon-red); background:rgba(255,61,113,0.1); }
+.chip-remove svg { width:12px; height:12px; }
+
+/* Buttons */
+.cmd-btn { display:flex; align-items:center; justify-content:center; gap:8px; padding:9px 14px; border-radius:4px; border:1px solid rgba(123,47,255,0.2); background:rgba(123,47,255,0.06); color:var(--text-primary); font-family:var(--font-mono); font-size:11px; font-weight:600; letter-spacing:0.07em; cursor:pointer; transition:all 0.12s ease; text-transform:uppercase; }
+.cmd-btn:hover:not(:disabled) { border-color:rgba(123,47,255,0.5); background:rgba(123,47,255,0.12); color:var(--text-bright); }
+.cmd-btn:disabled { opacity:.35; cursor:not-allowed; }
+.cmd-btn-primary { background:rgba(0,245,255,0.07); border-color:rgba(0,245,255,0.25); color:var(--neon-cyan); }
+.cmd-btn-primary:hover:not(:disabled) { background:rgba(0,245,255,0.14); border-color:var(--neon-cyan); box-shadow:0 0 18px rgba(0,245,255,0.2); color:#fff; }
+.cmd-btn-electric { background:rgba(123,47,255,0.1); border-color:var(--neon-violet); color:var(--neon-violet-l); }
+.cmd-btn-electric:hover:not(:disabled) { background:rgba(123,47,255,0.22); box-shadow:0 0 22px rgba(123,47,255,0.4); color:#fff; }
+.btn-spinner { width:12px; height:12px; border-radius:50%; border:2px solid rgba(0,245,255,0.2); border-top-color:var(--neon-cyan); display:none; }
+.btn-spinner.spinning { display:block; animation:spin 0.7s linear infinite; }
+@keyframes spin { to{transform:rotate(360deg)} }
+.pipeline-hint { font-size:10px; color:var(--text-muted); text-align:center; font-style:italic; }
+.panel-footer { margin-top:auto; padding-top:14px; display:flex; justify-content:space-around; border-top:1px solid var(--panel-border); }
+.footer-stat { display:flex; flex-direction:column; align-items:center; gap:2px; }
+.footer-stat-label { font-family:var(--font-mono); font-size:8px; letter-spacing:0.12em; color:var(--text-muted); text-transform:uppercase; }
+.footer-stat-val { font-family:var(--font-mono); font-size:18px; font-weight:700; color:var(--neon-violet-l); }
+
+/* WORKSPACE */
+.workspace { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; background:rgba(2,2,12,0.5); }
+.workspace-header { height:40px; padding:0 20px; border-bottom:1px solid var(--panel-border); display:flex; align-items:center; justify-content:space-between; background:rgba(3,3,14,0.85); flex-shrink:0; }
+.ws-header-left { display:flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.1em; color:var(--text-muted); text-transform:uppercase; }
+.ws-header-left svg { width:13px; height:13px; color:var(--neon-violet); }
+.ws-header-right { display:flex; gap:4px; }
+.icon-btn { width:28px; height:28px; display:flex; align-items:center; justify-content:center; background:transparent; border:none; color:var(--text-muted); border-radius:4px; cursor:pointer; transition:all 0.12s ease; }
+.icon-btn:hover { color:var(--text-primary); background:rgba(123,47,255,0.06); }
+.icon-btn svg { width:13px; height:13px; }
+
+/* Terminal Feed */
+.terminal-feed { display:none; flex-direction:column; gap:2px; max-height:200px; overflow-y:auto; background:rgba(0,0,6,0.97); border-bottom:1px solid var(--panel-border); padding:10px 20px; font-family:var(--font-mono); font-size:11px; flex-shrink:0; }
+.terminal-feed.visible { display:flex; }
+.feed-row { display:flex; gap:8px; align-items:baseline; color:var(--text-muted); }
+.feed-row.active { color:var(--text-primary); }
+.feed-row.done { color:var(--neon-green); }
+.feed-row.error { color:var(--neon-red); }
+.feed-time { color:var(--text-muted); flex-shrink:0; font-size:10px; }
+.feed-tag { color:var(--neon-cyan); font-weight:600; flex-shrink:0; }
+.feed-sep { color:var(--text-muted); flex-shrink:0; }
+.feed-msg { flex:1; }
+.feed-blink { color:var(--neon-violet); animation:blink 0.8s step-end infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+/* Chat History */
+.chat-history { flex:1; overflow-y:auto; display:flex; flex-direction:column; min-height:0; }
+
+/* Welcome Screen */
+.welcome-screen { flex:1; display:flex; align-items:center; justify-content:center; position:relative; min-height:400px; overflow:hidden; }
+.particle-canvas { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; }
+.welcome-content { position:relative; z-index:2; text-align:center; padding:40px 24px; max-width:620px; width:100%; }
+.welcome-badge { display:inline-block; padding:4px 16px; border:1px solid rgba(0,245,255,0.3); border-radius:20px; font-family:var(--font-mono); font-size:9px; letter-spacing:0.22em; color:var(--neon-cyan); margin-bottom:24px; background:rgba(0,245,255,0.05); text-transform:uppercase; }
+.welcome-title { display:flex; flex-direction:column; gap:4px; margin-bottom:16px; }
+.welcome-title-main { font-family:var(--font-head); font-size:54px; font-weight:700; letter-spacing:-0.03em; line-height:1; background:linear-gradient(135deg,#fff 0%,#9EF5FF 50%,#7B2FFF 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+.welcome-title-sub { font-family:var(--font-mono); font-size:11px; letter-spacing:0.28em; color:var(--text-secondary); text-transform:uppercase; }
+.welcome-desc { font-size:14px; color:var(--text-secondary); line-height:1.75; max-width:480px; margin:0 auto 32px; }
+.welcome-cards { display:flex; gap:12px; justify-content:center; }
+.welcome-card { flex:1; max-width:160px; padding:16px 12px; background:rgba(8,8,28,0.85); border:1px solid var(--panel-border); border-radius:8px; display:flex; flex-direction:column; align-items:center; gap:8px; text-align:center; transition:all 0.22s ease; }
+.welcome-card:hover { border-color:var(--neon-violet); background:rgba(123,47,255,0.08); box-shadow:var(--glow-violet); transform:translateY(-3px); }
+.welcome-card svg { width:20px; height:20px; color:var(--neon-violet); }
+.welcome-card strong { font-size:12px; font-weight:600; color:var(--text-bright); font-family:var(--font-head); }
+.welcome-card span { font-size:10px; color:var(--text-muted); font-family:var(--font-mono); }
+
+/* Messages */
+.msg { display:flex; gap:16px; padding:20px 24px; animation:msgIn 0.2s ease; }
+@keyframes msgIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+.msg-user { border-left:2px solid rgba(123,47,255,0.3); }
+.msg-user:hover { background:rgba(123,47,255,0.025); }
+.msg-bot { background:rgba(8,8,28,0.55); border-left:2px solid var(--neon-cyan); border-bottom:1px solid rgba(0,245,255,0.06); }
+.msg-avatar { width:32px; height:32px; border-radius:4px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.msg-avatar-user { background:rgba(123,47,255,0.1); border:1px solid rgba(123,47,255,0.25); color:var(--neon-violet-l); }
+.msg-avatar-bot { background:transparent; width:36px; height:36px; }
+.msg-avatar-bot svg { width:36px; height:36px; }
+.msg-body { flex:1; min-width:0; max-width:820px; }
+.msg-user-text { color:var(--text-primary); font-size:14px; line-height:1.65; padding-top:4px; }
+.msg-rendered { color:var(--text-primary); font-size:14px; line-height:1.75; }
+.msg-rendered p { margin-bottom:12px; }
+.msg-rendered p:last-child { margin-bottom:0; }
+.msg-rendered strong { color:var(--text-bright); font-weight:600; }
+.msg-rendered code { font-family:var(--font-mono); font-size:12px; color:var(--text-code); background:rgba(0,245,255,0.07); padding:1px 5px; border-radius:3px; border:1px solid rgba(0,245,255,0.12); }
+.msg-rendered pre { background:rgba(0,0,8,0.95); border:1px solid var(--panel-border); border-radius:8px; padding:16px; overflow-x:auto; margin:12px 0; }
+.msg-rendered pre code { background:transparent; border:none; padding:0; color:var(--text-code); font-size:12px; }
+.msg-rendered ul { margin:8px 0 12px 20px; }
+.msg-rendered li { margin-bottom:4px; }
+.msg-rendered h1,.msg-rendered h2,.msg-rendered h3 { font-family:var(--font-head); color:var(--text-bright); margin:16px 0 8px; }
+
+/* Thinking dots */
+.think-dots { display:flex; gap:5px; align-items:center; padding:8px 0; }
+.think-dots span { width:6px; height:6px; border-radius:50%; background:var(--neon-violet); animation:thinkPulse 1.3s ease infinite; }
+.think-dots span:nth-child(2) { animation-delay:0.18s; background:var(--neon-cyan); }
+.think-dots span:nth-child(3) { animation-delay:0.36s; }
+@keyframes thinkPulse { 0%,80%,100%{transform:scale(0.65);opacity:.35} 40%{transform:scale(1.1);opacity:1} }
+
+/* Pipeline Card */
+.pipeline-card { background:rgba(0,0,8,0.95); border:1px solid var(--panel-border); border-radius:8px; overflow:hidden; margin-top:8px; }
+.pc-header { padding:12px 16px; background:rgba(123,47,255,0.07); border-bottom:1px solid var(--panel-border); display:flex; align-items:center; justify-content:space-between; }
+.pc-badge { font-family:var(--font-mono); font-size:10px; letter-spacing:0.1em; color:var(--neon-green); font-weight:600; }
+.pc-stats { display:flex; gap:16px; font-family:var(--font-mono); font-size:10px; color:var(--text-secondary); }
+.pc-stats strong { color:var(--neon-cyan); }
+.pc-section { padding:12px 16px; border-bottom:1px solid rgba(123,47,255,0.06); }
+.pc-label { font-family:var(--font-mono); font-size:10px; letter-spacing:0.08em; color:var(--neon-violet); margin-bottom:8px; }
+.code-block { background:rgba(0,0,0,0.85); border:1px solid rgba(0,245,255,0.08); border-radius:4px; padding:12px; overflow-x:auto; max-height:300px; overflow-y:auto; }
+.code-block code { font-family:var(--font-mono); font-size:11px; color:var(--text-code); white-space:pre; }
+.output-block { background:rgba(0,0,0,0.5); border:1px solid rgba(123,47,255,0.08); border-radius:4px; padding:12px; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary); white-space:pre-wrap; max-height:200px; overflow-y:auto; }
+.pc-metric { padding:12px 16px; display:flex; align-items:center; gap:12px; }
+.pc-metric-label { font-family:var(--font-mono); font-size:10px; letter-spacing:0.1em; color:var(--text-muted); }
+.pc-metric-val { font-family:var(--font-mono); font-size:18px; font-weight:700; color:var(--neon-amber); text-shadow:0 0 12px rgba(255,184,0,0.45); }
+
+.ctx-toggle { display:inline-flex; align-items:center; gap:6px; margin-top:12px; padding:4px 12px; background:transparent; border:1px solid rgba(123,47,255,0.2); border-radius:20px; color:var(--text-muted); font-family:var(--font-mono); font-size:10px; letter-spacing:0.08em; cursor:pointer; transition:all 0.12s ease; text-transform:uppercase; }
+.ctx-toggle:hover { border-color:var(--neon-violet); color:var(--neon-violet-l); }
+.ctx-data { display:none; background:rgba(0,0,0,0.6); border:1px solid var(--panel-border); border-radius:8px; padding:12px; margin-top:8px; font-family:var(--font-mono); font-size:11px; color:var(--text-secondary); white-space:pre-wrap; max-height:280px; overflow-y:auto; }
+.ctx-data.open { display:block; animation:msgIn 0.2s ease; }
+
+/* Chat Input */
+.chat-input-zone { padding:14px 24px 18px; background:rgba(3,3,14,0.92); border-top:1px solid var(--panel-border); flex-shrink:0; }
+.chat-input-glass { display:flex; align-items:flex-end; gap:10px; background:rgba(8,8,28,0.9); border:1px solid rgba(123,47,255,0.22); border-radius:12px; padding:12px 14px; transition:all 0.22s ease; box-shadow:0 4px 24px rgba(0,0,0,0.4); }
+.chat-input-glass:focus-within { border-color:var(--neon-violet); box-shadow:var(--glow-input),0 4px 32px rgba(0,0,0,0.5); }
+.chat-input-glass textarea { flex:1; background:transparent; border:none; color:var(--text-bright); font-family:var(--font-body); font-size:14px; line-height:1.5; resize:none; outline:none; max-height:200px; padding:2px 0; }
+.chat-input-glass textarea::placeholder { color:var(--text-muted); }
+.send-btn { width:36px; height:36px; border-radius:4px; border:1px solid var(--neon-violet); background:rgba(123,47,255,0.15); color:var(--neon-violet-l); display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all 0.12s ease; flex-shrink:0; }
+.send-btn svg { width:15px; height:15px; }
+.send-btn:hover { background:rgba(123,47,255,0.32); box-shadow:var(--glow-violet); color:#fff; }
+.send-btn.sending { animation:sendPulse 0.6s ease infinite alternate; pointer-events:none; }
+@keyframes sendPulse { from{box-shadow:0 0 6px rgba(123,47,255,0.3)} to{box-shadow:0 0 20px rgba(123,47,255,0.7)} }
+.input-hint { margin-top:8px; font-family:var(--font-mono); font-size:10px; color:var(--text-muted); text-align:center; letter-spacing:0.04em; }
+
+/* Modal */
+.modal-overlay { position:fixed; top:0; left:0; right:0; bottom:0; z-index:200; background:rgba(0,0,0,0.82); display:flex; align-items:flex-start; justify-content:center; padding-top:12vh; opacity:0; pointer-events:none; transition:opacity 0.22s ease; }
+.modal-overlay.visible { opacity:1; pointer-events:all; }
+.modal-glass { background:rgba(5,5,22,0.98); border:1px solid var(--neon-violet); border-radius:12px; width:100%; max-width:540px; overflow:hidden; box-shadow:0 24px 64px rgba(0,0,0,0.7),var(--glow-violet); transform:scale(0.96) translateY(-8px); transition:transform 0.22s ease; }
+.modal-overlay.visible .modal-glass { transform:scale(1) translateY(0); }
+.modal-head { display:flex; align-items:center; gap:10px; padding:14px 16px; background:rgba(123,47,255,0.09); border-bottom:1px solid var(--panel-border); font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; color:var(--neon-violet-l); text-transform:uppercase; }
+.modal-head svg { width:14px; height:14px; color:var(--neon-violet); }
+.modal-close-btn { margin-left:auto; background:transparent; border:none; color:var(--text-muted); cursor:pointer; display:flex; padding:4px; border-radius:4px; transition:all 0.12s ease; }
+.modal-close-btn:hover { color:var(--neon-red); background:rgba(255,61,113,0.1); }
+.modal-close-btn svg { width:14px; height:14px; }
+.modal-search-row { display:flex; align-items:center; gap:10px; padding:14px 16px; border-bottom:1px solid var(--panel-border); }
+.modal-search-row svg { width:14px; height:14px; color:var(--text-muted); flex-shrink:0; }
+.modal-search-row input { flex:1; background:transparent; border:none; color:var(--text-bright); font-size:15px; font-family:var(--font-mono); outline:none; }
+.modal-search-row input::placeholder { color:var(--text-muted); }
+.modal-chips { max-height:300px; overflow-y:auto; padding:8px; }
+.col-chip { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:4px; cursor:pointer; color:var(--text-secondary); font-family:var(--font-mono); font-size:12px; transition:all 0.12s ease; border:1px solid transparent; }
+.col-chip:hover { background:rgba(123,47,255,0.08); color:var(--text-primary); }
+.col-chip.selected { background:rgba(123,47,255,0.14); border-color:rgba(123,47,255,0.35); color:var(--neon-violet-l); }
+.col-chip svg { width:13px; height:13px; color:var(--neon-violet); }
+.modal-actions { display:flex; justify-content:flex-end; gap:8px; padding:12px 16px; border-top:1px solid var(--panel-border); background:rgba(0,0,8,0.5); }
+
+/* Toasts */
+.toast-stack { position:fixed; bottom:24px; right:24px; z-index:500; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
+.toast { display:flex; align-items:flex-start; gap:10px; padding:12px 16px; border-radius:8px; font-size:12px; font-family:var(--font-body); max-width:380px; pointer-events:all; opacity:0; transform:translateX(16px); transition:all 0.3s cubic-bezier(0.34,1.56,0.64,1); background:rgba(5,5,22,0.98); border:1px solid var(--panel-border); box-shadow:0 8px 32px rgba(0,0,0,0.5); color:var(--text-primary); line-height:1.5; }
+.toast.visible { opacity:1; transform:translateX(0); }
+.toast svg { flex-shrink:0; width:15px; height:15px; margin-top:1px; }
+.toast-success { border-color:rgba(0,255,157,0.3); }
+.toast-success svg { color:var(--neon-green); }
+.toast-error { border-color:rgba(255,61,113,0.3); }
+.toast-error svg { color:var(--neon-red); }
+.toast-info svg { color:var(--neon-cyan); }
+</style>
 </head>
 <body>
 
-<!-- ========================= BOOT OVERLAY ========================= -->
 <div class="boot-overlay" id="bootOverlay">
-    <div class="boot-terminal">
-        <div class="boot-line" style="--d:0s">AUTOMODELER ORCHESTRATOR v2.0</div>
-        <div class="boot-line" style="--d:0.3s">Initializing neural substrate...</div>
-        <div class="boot-line" style="--d:0.6s">Loading vector embedding models...</div>
-        <div class="boot-line" style="--d:0.9s">Connecting to AWS Lambda gateway...</div>
-        <div class="boot-line" style="--d:1.2s; color: var(--neon-green)">SYSTEM ONLINE &#9632;</div>
-    </div>
+  <div class="boot-terminal">
+    <div class="boot-line" style="--d:0s">AUTOMODELER ORCHESTRATOR v2.0</div>
+    <div class="boot-line" style="--d:0.3s">Initializing neural substrate...</div>
+    <div class="boot-line" style="--d:0.6s">Loading vector embedding models...</div>
+    <div class="boot-line" style="--d:0.9s">Connecting to AWS Lambda gateway...</div>
+    <div class="boot-line" style="--d:1.2s; color:#00FF9D">SYSTEM ONLINE &#9632;</div>
+  </div>
 </div>
 
-<!-- ========================= GRID BACKGROUND ========================= -->
 <div class="grid-bg" aria-hidden="true"></div>
-<canvas class="scan-overlay" id="scanCanvas" aria-hidden="true"></canvas>
 
-<!-- ========================= TOPBAR ========================= -->
-<header class="topbar" role="banner">
-    <div class="topbar-brand">
-        <div class="brand-icon" aria-hidden="true">
-            <svg viewBox="0 0 40 40" fill="none">
-                <circle cx="20" cy="20" r="8" stroke="url(#brandGrad)" stroke-width="2"/>
-                <ellipse cx="20" cy="20" rx="18" ry="7" stroke="url(#brandGrad)" stroke-width="1.5" opacity="0.7"/>
-                <ellipse cx="20" cy="20" rx="18" ry="7" stroke="url(#brandGrad)" stroke-width="1.5" opacity="0.7" transform="rotate(60 20 20)"/>
-                <ellipse cx="20" cy="20" rx="18" ry="7" stroke="url(#brandGrad)" stroke-width="1.5" opacity="0.7" transform="rotate(120 20 20)"/>
-                <circle cx="20" cy="20" r="3" fill="url(#brandGrad)"/>
-                <defs>
-                    <linearGradient id="brandGrad" x1="0" y1="0" x2="40" y2="40">
-                        <stop offset="0%" stop-color="#7B2FFF"/>
-                        <stop offset="100%" stop-color="#00F5FF"/>
-                    </linearGradient>
-                </defs>
-            </svg>
-        </div>
-        <div class="brand-text">
-            <h1 class="brand-name">AutoModeler</h1>
-            <span class="brand-sub">ORCHESTRATOR v2.0</span>
-        </div>
+<!-- TOPBAR -->
+<header class="topbar">
+  <div class="topbar-brand">
+    <div class="brand-icon">
+      <svg viewBox="0 0 40 40" fill="none">
+        <circle cx="20" cy="20" r="8" stroke="url(#bg1)" stroke-width="2"/>
+        <ellipse cx="20" cy="20" rx="18" ry="7" stroke="url(#bg1)" stroke-width="1.5" opacity="0.7"/>
+        <ellipse cx="20" cy="20" rx="18" ry="7" stroke="url(#bg1)" stroke-width="1.5" opacity="0.7" transform="rotate(60 20 20)"/>
+        <ellipse cx="20" cy="20" rx="18" ry="7" stroke="url(#bg1)" stroke-width="1.5" opacity="0.7" transform="rotate(120 20 20)"/>
+        <circle cx="20" cy="20" r="3" fill="url(#bg1)"/>
+        <defs><linearGradient id="bg1" x1="0" y1="0" x2="40" y2="40"><stop offset="0%" stop-color="#7B2FFF"/><stop offset="100%" stop-color="#00F5FF"/></linearGradient></defs>
+      </svg>
     </div>
-
-    <div class="topbar-metrics" aria-label="System Metrics">
-        <div class="metric-chip">
-            <span class="metric-label">LATENCY</span>
-            <span class="metric-value" id="metricLatencyVal">--ms</span>
-        </div>
-        <div class="metric-chip">
-            <span class="metric-label">MODELS</span>
-            <span class="metric-value">3 ACTIVE</span>
-        </div>
-        <div class="metric-chip">
-            <span class="metric-label">REGION</span>
-            <span class="metric-value">AP-SE-1</span>
-        </div>
+    <div class="brand-text">
+      <h1 class="brand-name">AutoModeler</h1>
+      <span class="brand-sub">ORCHESTRATOR v2.0</span>
     </div>
-
-    <div class="topbar-status">
-        <div class="status-badge ready" id="systemBadge">
-            <span class="status-ring"></span>
-            <span class="status-text" id="headerStatus">READY</span>
-        </div>
+  </div>
+  <div class="topbar-metrics">
+    <div class="metric-chip"><span class="metric-label">LATENCY</span><span class="metric-value" id="metricLatencyVal">--ms</span></div>
+    <div class="metric-chip"><span class="metric-label">MODELS</span><span class="metric-value">3 ACTIVE</span></div>
+    <div class="metric-chip"><span class="metric-label">REGION</span><span class="metric-value">AP-SE-1</span></div>
+  </div>
+  <div class="topbar-status">
+    <div class="status-badge ready" id="systemBadge">
+      <span class="status-ring"></span>
+      <span class="status-text" id="headerStatus">READY</span>
     </div>
+  </div>
 </header>
 
-<!-- ========================= APP SHELL ========================= -->
 <div class="app-shell">
 
-<!-- ========================= COMMAND PANEL ========================= -->
-<aside class="command-panel" role="complementary" aria-label="Command Panel">
+  <!-- COMMAND PANEL -->
+  <aside class="command-panel">
     <div class="panel-inner">
-
-        <div class="panel-section">
-            <div class="section-tag">// ENDPOINT</div>
-            <div class="field-group">
-                <div class="field">
-                    <label class="field-label" for="apiUrl">API Gateway</label>
-                    <div class="field-input-wrap">
-                        <svg class="field-icon" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                        <input type="url" id="apiUrl" placeholder="https://api.gateway/prod" autocomplete="off">
-                    </div>
-                </div>
-                <div class="field">
-                    <label class="field-label" for="s3Bucket">S3 Bucket</label>
-                    <div class="field-input-wrap">
-                        <svg class="field-icon" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-                        <input type="text" id="s3Bucket" placeholder="bucket-name" autocomplete="off">
-                    </div>
-                </div>
+      <div class="panel-section">
+        <div class="section-tag">// ENDPOINT</div>
+        <div class="field-group">
+          <div class="field">
+            <label class="field-label" for="apiUrl">API Gateway</label>
+            <div class="field-input-wrap">
+              <svg class="field-icon" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+              <input type="url" id="apiUrl" placeholder="https://api.gateway/prod" autocomplete="off">
             </div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="s3Bucket">S3 Bucket</label>
+            <div class="field-input-wrap">
+              <svg class="field-icon" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+              <input type="text" id="s3Bucket" placeholder="bucket-name" autocomplete="off">
+            </div>
+          </div>
         </div>
+      </div>
 
-        <div class="panel-divider"></div>
+      <div class="panel-divider"></div>
 
-        <div class="panel-section">
-            <div class="section-tag">// WORKSPACE</div>
-            <div class="drop-zone" id="dropZone" tabindex="0" role="button" aria-label="Drop files here or click to upload">
-                <input type="file" id="fileInput" multiple accept=".csv,.tsv,.zip,.wav,.mp3,.jpg,.jpeg,.png,.m4a" aria-label="File upload">
-                <div class="drop-zone-inner">
-                    <div class="drop-icon-ring">
-                        <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                    </div>
-                    <p class="drop-label">DROP FILES <span class="drop-or">OR</span> CLICK</p>
-                    <p class="drop-formats">CSV &middot; ZIP &middot; AUDIO &middot; IMAGE</p>
-                </div>
+      <div class="panel-section">
+        <div class="section-tag">// WORKSPACE</div>
+        <div class="drop-zone" id="dropZone" tabindex="0">
+          <input type="file" id="fileInput" multiple accept=".csv,.tsv,.zip,.wav,.mp3,.jpg,.jpeg,.png,.m4a">
+          <div class="drop-zone-inner">
+            <div class="drop-icon-ring">
+              <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             </div>
-            <div class="file-list" id="fileList"></div>
-            <button class="cmd-btn cmd-btn-primary" id="uploadBtn" onclick="uploadAllFiles()" disabled>
-                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                <span>TRANSMIT TO S3</span>
-                <div class="btn-spinner" id="uploadLoader"></div>
-            </button>
+            <p class="drop-label">DROP FILES <span class="drop-or">OR</span> CLICK</p>
+            <p class="drop-formats">CSV &middot; ZIP &middot; AUDIO &middot; IMAGE</p>
+          </div>
         </div>
+        <div class="file-list" id="fileList"></div>
+        <button class="cmd-btn cmd-btn-primary" id="uploadBtn" onclick="uploadAllFiles()" disabled>
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span>TRANSMIT TO S3</span>
+          <div class="btn-spinner" id="uploadLoader"></div>
+        </button>
+      </div>
 
-        <div class="panel-divider"></div>
+      <div class="panel-divider"></div>
 
-        <div class="panel-section">
-            <div class="section-tag">// PIPELINE</div>
-            <button class="cmd-btn cmd-btn-electric" id="trainBtn" onclick="openColumnPicker()" disabled>
-                <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                <span>EXECUTE PIPELINE</span>
-            </button>
-            <p class="pipeline-hint">Or type your intent in chat</p>
-        </div>
+      <div class="panel-section">
+        <div class="section-tag">// PIPELINE</div>
+        <button class="cmd-btn cmd-btn-electric" id="trainBtn" onclick="openColumnPicker()" disabled>
+          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span>EXECUTE PIPELINE</span>
+        </button>
+        <p class="pipeline-hint">Or type your intent in chat</p>
+      </div>
 
-        <div class="panel-footer">
-            <div class="footer-stat">
-                <span class="footer-stat-label">DATASETS</span>
-                <span class="footer-stat-val" id="datasetCount">0</span>
-            </div>
-            <div class="footer-stat">
-                <span class="footer-stat-label">QUERIES</span>
-                <span class="footer-stat-val" id="queryCount">0</span>
-            </div>
-            <div class="footer-stat">
-                <span class="footer-stat-label">RUNS</span>
-                <span class="footer-stat-val" id="runCount">0</span>
-            </div>
-        </div>
-
+      <div class="panel-footer">
+        <div class="footer-stat"><span class="footer-stat-label">DATASETS</span><span class="footer-stat-val" id="datasetCount">0</span></div>
+        <div class="footer-stat"><span class="footer-stat-label">QUERIES</span><span class="footer-stat-val" id="queryCount">0</span></div>
+        <div class="footer-stat"><span class="footer-stat-label">RUNS</span><span class="footer-stat-val" id="runCount">0</span></div>
+      </div>
     </div>
-</aside>
+  </aside>
 
-<!-- ========================= MAIN WORKSPACE ========================= -->
-<main class="workspace" role="main">
-
+  <!-- WORKSPACE -->
+  <main class="workspace">
     <div class="workspace-header">
-        <div class="ws-header-left">
-            <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-            <span>TERMINAL &amp; AGENT OUTPUT</span>
-        </div>
-        <div class="ws-header-right">
-            <button class="icon-btn" onclick="clearFeed()" title="Clear terminal" aria-label="Clear terminal">
-                <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            </button>
-        </div>
+      <div class="ws-header-left">
+        <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        <span>TERMINAL &amp; AGENT OUTPUT</span>
+      </div>
+      <div class="ws-header-right">
+        <button class="icon-btn" onclick="clearFeed()" title="Clear terminal">
+          <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+      </div>
     </div>
 
-    <div class="terminal-feed" id="activityFeed" role="log" aria-live="polite"></div>
+    <div class="terminal-feed" id="activityFeed"></div>
 
     <div class="chat-history" id="chatHistory">
-        <div class="welcome-screen" id="welcomeState">
-            <canvas class="particle-canvas" id="particleCanvas" aria-hidden="true"></canvas>
-            <div class="welcome-content">
-                <div class="welcome-badge">MISSION CONTROL</div>
-                <h2 class="welcome-title">
-                    <span class="welcome-title-main">AutoModeler</span>
-                    <span class="welcome-title-sub">Orchestration Engine</span>
-                </h2>
-                <p class="welcome-desc">Autonomous multi-modal ML pipeline. Upload any dataset — the agent handles schema generation, vector embedding, and model training end-to-end.</p>
-                <div class="welcome-cards">
-                    <div class="welcome-card">
-                        <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-                        <strong>Multi-Modal</strong>
-                        <span>CSV &middot; Audio &middot; Images &middot; ZIP</span>
-                    </div>
-                    <div class="welcome-card">
-                        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                        <strong>Vector Search</strong>
-                        <span>CockroachDB + Embeddings</span>
-                    </div>
-                    <div class="welcome-card">
-                        <svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-                        <strong>AutoML</strong>
-                        <span>AI-generated pipelines</span>
-                    </div>
-                </div>
+      <div class="welcome-screen" id="welcomeState">
+        <canvas class="particle-canvas" id="particleCanvas" aria-hidden="true"></canvas>
+        <div class="welcome-content">
+          <div class="welcome-badge">MISSION CONTROL</div>
+          <h2 class="welcome-title">
+            <span class="welcome-title-main">AutoModeler</span>
+            <span class="welcome-title-sub">Orchestration Engine</span>
+          </h2>
+          <p class="welcome-desc">Autonomous multi-modal ML pipeline. Upload any dataset — the agent handles schema generation, vector embedding, and model training end-to-end.</p>
+          <div class="welcome-cards">
+            <div class="welcome-card">
+              <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+              <strong>Multi-Modal</strong>
+              <span>CSV &middot; Audio &middot; Images</span>
             </div>
+            <div class="welcome-card">
+              <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <strong>Vector Search</strong>
+              <span>CockroachDB + Embeddings</span>
+            </div>
+            <div class="welcome-card">
+              <svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+              <strong>AutoML</strong>
+              <span>AI-generated pipelines</span>
+            </div>
+          </div>
         </div>
+      </div>
     </div>
 
     <div class="chat-input-zone">
-        <div class="chat-input-glass" id="chatInputGlass">
-            <textarea id="queryInput" placeholder="Interrogate your data or say 'predict Course'..." rows="1" aria-label="Chat with your data"></textarea>
-            <button class="send-btn" id="sendBtn" onclick="sendMessage()" aria-label="Send message">
-                <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-            </button>
-        </div>
-        <div class="input-hint">Enter to send &nbsp;&middot;&nbsp; Shift+Enter for new line &nbsp;&middot;&nbsp; Say "predict [column]" to trigger AutoML</div>
+      <div class="chat-input-glass">
+        <textarea id="queryInput" placeholder="Interrogate your data or say 'predict Course'..." rows="1"></textarea>
+        <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+          <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+      <div class="input-hint">Enter to send &nbsp;&middot;&nbsp; Shift+Enter for new line &nbsp;&middot;&nbsp; Say "predict [column]" to trigger AutoML</div>
     </div>
-
-</main>
+  </main>
 </div>
 
-<!-- ========================= MODAL ========================= -->
-<div class="modal-overlay" id="modalOverlay" onclick="closeModalOnBackdrop(event)" role="dialog" aria-modal="true" aria-label="Select target column">
-    <div class="modal-glass" id="modalSheet">
-        <div class="modal-head">
-            <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            <span>SELECT TARGET COLUMN</span>
-            <button class="modal-close-btn" onclick="closeModal()" aria-label="Close">
-                <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
-        </div>
-        <div class="modal-search-row">
-            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" id="customColumnInput" placeholder="Type or search column name..." autocomplete="off">
-        </div>
-        <div class="modal-chips" id="columnChips"></div>
-        <div class="modal-actions">
-            <button class="cmd-btn" onclick="closeModal()">CANCEL</button>
-            <button class="cmd-btn cmd-btn-electric" onclick="startTraining()">
-                <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                LAUNCH PIPELINE
-            </button>
-        </div>
+<!-- MODAL -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModalOnBackdrop(event)">
+  <div class="modal-glass" id="modalSheet">
+    <div class="modal-head">
+      <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      <span>SELECT TARGET COLUMN</span>
+      <button class="modal-close-btn" onclick="closeModal()">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
     </div>
+    <div class="modal-search-row">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="customColumnInput" placeholder="Type or search column name..." autocomplete="off">
+    </div>
+    <div class="modal-chips" id="columnChips"></div>
+    <div class="modal-actions">
+      <button class="cmd-btn" onclick="closeModal()">CANCEL</button>
+      <button class="cmd-btn cmd-btn-electric" onclick="startTraining()">
+        <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        LAUNCH PIPELINE
+      </button>
+    </div>
+  </div>
 </div>
 
-<!-- ========================= TOASTS ========================= -->
-<div class="toast-stack" id="toastContainer" role="region" aria-label="Notifications" aria-live="polite"></div>
+<div class="toast-stack" id="toastContainer"></div>
 
 <script>
-// ══════════════════════════════════════════════════
-//  STATE
-// ══════════════════════════════════════════════════
+// STATE
 let uploadedFiles = [];
 let uploadedDatasets = [];
 let isThinking = false;
@@ -256,516 +569,313 @@ const chatHistory = document.getElementById('chatHistory');
 const activityFeed = document.getElementById('activityFeed');
 
 ['apiUrl','s3Bucket'].forEach(k => {
-    const v = localStorage.getItem(k);
-    if (v) document.getElementById(k).value = v;
+  const v = localStorage.getItem(k);
+  if (v) document.getElementById(k).value = v;
 });
 
-// ══════════════════════════════════════════════════
-//  BOOT SEQUENCE
-// ══════════════════════════════════════════════════
+// BOOT
 window.addEventListener('load', () => {
-    setTimeout(() => {
-        document.getElementById('bootOverlay').classList.add('boot-hidden');
-    }, 2100);
-    initParticles();
-    initScanOverlay();
-    animateMetrics();
+  setTimeout(() => { document.getElementById('bootOverlay').classList.add('boot-hidden'); }, 2200);
+  initParticles();
+  animateMetrics();
 });
 
-// ══════════════════════════════════════════════════
-//  PARTICLE CANVAS
-// ══════════════════════════════════════════════════
+// PARTICLES
 function initParticles() {
-    const canvas = document.getElementById('particleCanvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    let particles = [];
-
-    function resize() {
-        canvas.width = canvas.offsetWidth;
-        canvas.height = canvas.offsetHeight;
-    }
-    resize();
-    window.addEventListener('resize', resize);
-
-    for (let i = 0; i < 80; i++) {
-        particles.push({
-            x: Math.random() * canvas.width,
-            y: Math.random() * canvas.height,
-            r: Math.random() * 1.5 + 0.3,
-            vx: (Math.random() - 0.5) * 0.25,
-            vy: (Math.random() - 0.5) * 0.25,
-            alpha: Math.random() * 0.6 + 0.2
-        });
-    }
-
-    function draw() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        particles.forEach((p, i) => {
-            p.x += p.vx; p.y += p.vy;
-            if (p.x < 0) p.x = canvas.width;
-            if (p.x > canvas.width) p.x = 0;
-            if (p.y < 0) p.y = canvas.height;
-            if (p.y > canvas.height) p.y = 0;
-            particles.forEach((q, j) => {
-                if (i >= j) return;
-                const dist = Math.hypot(p.x - q.x, p.y - q.y);
-                if (dist < 120) {
-                    ctx.beginPath();
-                    ctx.strokeStyle = `rgba(123,47,255,${(1-dist/120)*0.18})`;
-                    ctx.lineWidth = 0.5;
-                    ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
-                    ctx.stroke();
-                }
-            });
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-            ctx.fillStyle = `rgba(0,245,255,${p.alpha})`;
-            ctx.fill();
-        });
-        requestAnimationFrame(draw);
-    }
-    draw();
+  const canvas = document.getElementById('particleCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  let pts = [];
+  function resize() { canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight; }
+  resize();
+  window.addEventListener('resize', resize);
+  for (let i = 0; i < 70; i++) {
+    pts.push({ x:Math.random()*canvas.width, y:Math.random()*canvas.height, r:Math.random()*1.4+0.3, vx:(Math.random()-.5)*.25, vy:(Math.random()-.5)*.25, a:Math.random()*.5+0.2 });
+  }
+  function draw() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    pts.forEach((p,i) => {
+      p.x+=p.vx; p.y+=p.vy;
+      if(p.x<0)p.x=canvas.width; if(p.x>canvas.width)p.x=0;
+      if(p.y<0)p.y=canvas.height; if(p.y>canvas.height)p.y=0;
+      pts.forEach((q,j) => {
+        if(i>=j) return;
+        const d=Math.hypot(p.x-q.x,p.y-q.y);
+        if(d<110){ctx.beginPath();ctx.strokeStyle=`rgba(123,47,255,${(1-d/110)*.15})`;ctx.lineWidth=0.5;ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);ctx.stroke();}
+      });
+      ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+      ctx.fillStyle=`rgba(0,245,255,${p.a})`;ctx.fill();
+    });
+    requestAnimationFrame(draw);
+  }
+  draw();
 }
 
-// ══════════════════════════════════════════════════
-//  SCANLINE OVERLAY
-// ══════════════════════════════════════════════════
-function initScanOverlay() {
-    const canvas = document.getElementById('scanCanvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
-    resize();
-    window.addEventListener('resize', resize);
-    let y = 0;
-    function tick() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        for (let i = 0; i < canvas.height; i += 4) {
-            ctx.fillStyle = 'rgba(0,245,255,0.008)';
-            ctx.fillRect(0, i, canvas.width, 1);
-        }
-        ctx.fillStyle = 'rgba(123,47,255,0.035)';
-        ctx.fillRect(0, y, canvas.width, 2);
-        y = (y + 0.4) % canvas.height;
-        requestAnimationFrame(tick);
-    }
-    tick();
-}
-
-// ══════════════════════════════════════════════════
-//  LIVE METRICS
-// ══════════════════════════════════════════════════
 function animateMetrics() {
-    setInterval(() => {
-        const el = document.getElementById('metricLatencyVal');
-        if (el) el.textContent = Math.floor(Math.random() * 40 + 8) + 'ms';
-    }, 2500);
+  setInterval(() => {
+    const el = document.getElementById('metricLatencyVal');
+    if (el) el.textContent = Math.floor(Math.random()*40+8)+'ms';
+  }, 2500);
 }
 
-// ══════════════════════════════════════════════════
-//  TEXTAREA
-// ══════════════════════════════════════════════════
-queryInput.addEventListener('input', function() {
-    this.style.height = 'auto';
-    this.style.height = Math.min(this.scrollHeight, 200) + 'px';
-});
-queryInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-});
+// TEXTAREA
+queryInput.addEventListener('input', function() { this.style.height='auto'; this.style.height=Math.min(this.scrollHeight,200)+'px'; });
+queryInput.addEventListener('keydown', e => { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();} });
 
-// ══════════════════════════════════════════════════
-//  HELPERS
-// ══════════════════════════════════════════════════
+// HELPERS
 function getApiUrl() { return document.getElementById('apiUrl').value.trim(); }
 function getBucket() { return document.getElementById('s3Bucket').value.trim(); }
-function saveSettings() {
-    localStorage.setItem('apiUrl', getApiUrl());
-    localStorage.setItem('s3Bucket', getBucket());
-}
+function saveSettings() { localStorage.setItem('apiUrl',getApiUrl()); localStorage.setItem('s3Bucket',getBucket()); }
 
 function setHeaderStatus(txt) {
-    document.getElementById('headerStatus').textContent = txt;
-    const badge = document.getElementById('systemBadge');
-    badge.className = 'status-badge';
-    if (txt === 'READY' || txt === 'Ready') badge.classList.add('ready');
-    else if (txt.includes('Error') || txt.includes('error')) badge.classList.add('danger');
-    else badge.classList.add('busy');
+  document.getElementById('headerStatus').textContent = txt;
+  const b = document.getElementById('systemBadge');
+  b.className = 'status-badge';
+  if(txt==='READY'||txt==='Ready') b.classList.add('ready');
+  else if(txt.includes('Error')) b.classList.add('danger');
+  else b.classList.add('busy');
 }
 
-function toast(msg, type = 'info') {
-    const el = document.createElement('div');
-    el.className = `toast toast-${type}`;
-    const icons = {
-        success: '<svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
-        error:   '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
-        info:    '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+function toast(msg, type='info') {
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  const icons = {
+    success:'<svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+    error:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+    info:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+  };
+  el.innerHTML = `${icons[type]||icons.info}<span>${msg}</span>`;
+  document.getElementById('toastContainer').appendChild(el);
+  requestAnimationFrame(()=>el.classList.add('visible'));
+  setTimeout(()=>{el.classList.remove('visible');setTimeout(()=>el.remove(),400);},5500);
+}
+
+// FEED
+function showFeed(){activityFeed.classList.add('visible');}
+function hideFeed(){activityFeed.classList.remove('visible');}
+function clearFeed(){activityFeed.innerHTML='';hideFeed();}
+
+function addStep(tag,label,state='active'){
+  showFeed();
+  const el=document.createElement('div');
+  el.className=`feed-row ${state}`;
+  const t=new Date().toLocaleTimeString('en',{hour12:false});
+  el.innerHTML=`<span class="feed-time">[${t}]</span><span class="feed-tag">${tag}</span><span class="feed-sep"> &mdash; </span><span class="feed-msg">${label}</span>${state==='active'?'<span class="feed-blink"> &#9646;</span>':''}`;
+  activityFeed.appendChild(el);
+  activityFeed.scrollTop=activityFeed.scrollHeight;
+  return el;
+}
+
+function markStep(el,state,label=null){
+  el.className=`feed-row ${state}`;
+  if(label){
+    const t=new Date().toLocaleTimeString('en',{hour12:false});
+    el.innerHTML=`<span class="feed-time">[${t}]</span><span class="feed-tag">${state.toUpperCase()}</span><span class="feed-sep"> &mdash; </span><span class="feed-msg">${label}</span>`;
+  }
+}
+
+// FILES
+const fileInput=document.getElementById('fileInput');
+const dropZone=document.getElementById('dropZone');
+const fileList=document.getElementById('fileList');
+
+fileInput.addEventListener('change',()=>{addFiles([...fileInput.files]);fileInput.value='';});
+dropZone.addEventListener('dragover',e=>{e.preventDefault();dropZone.classList.add('drag-over');});
+dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop',e=>{e.preventDefault();dropZone.classList.remove('drag-over');addFiles([...e.dataTransfer.files]);});
+
+function getFileType(name){
+  const e=name.split('.').pop().toLowerCase();
+  if(['csv','tsv'].includes(e)) return 'csv';
+  if(e==='zip') return 'zip';
+  if(['wav','mp3','m4a','flac'].includes(e)) return 'audio';
+  if(['jpg','jpeg','png','bmp','webp'].includes(e)) return 'image';
+  return 'file';
+}
+
+function getFileIcon(t){
+  const icons={
+    csv:'<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
+    zip:'<svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>',
+    audio:'<svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
+    image:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
+    file:'<svg viewBox="0 0 24 24"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>'
+  };
+  return icons[t]||icons.file;
+}
+
+function addFiles(files){
+  files.forEach(f=>{
+    if(uploadedFiles.find(x=>x.name===f.name)) return;
+    uploadedFiles.push(f);
+    const type=getFileType(f.name);
+    const chip=document.createElement('div');
+    chip.className=`file-chip fc-${type}`;
+    chip.id='chip-'+f.name.replace(/[^a-zA-Z0-9]/g,'_');
+    chip.innerHTML=`<span class="chip-icon">${getFileIcon(type)}</span><span class="chip-name" title="${f.name}">${f.name}</span><span class="chip-size">${(f.size/1024).toFixed(1)}KB</span><button class="chip-remove" onclick="removeFile('${f.name}')"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
+    fileList.appendChild(chip);
+  });
+  updateUploadBtn();
+}
+
+function removeFile(name){
+  uploadedFiles=uploadedFiles.filter(f=>f.name!==name);
+  document.getElementById('chip-'+name.replace(/[^a-zA-Z0-9]/g,'_'))?.remove();
+  updateUploadBtn();
+}
+
+function updateUploadBtn(){ document.getElementById('uploadBtn').disabled=uploadedFiles.length===0; }
+
+// UPLOAD
+async function uploadAllFiles(){
+  const apiUrl=getApiUrl(), bucket=getBucket();
+  if(!apiUrl||!bucket){toast('Missing API URL or Bucket','error');return;}
+  saveSettings();
+  document.getElementById('uploadBtn').disabled=true;
+  document.getElementById('uploadLoader').classList.add('spinning');
+  setHeaderStatus('TRANSMITTING...');
+  hideWelcome();
+  for(const file of [...uploadedFiles]){
+    const step=addStep('UPLOAD',`${file.name} &rarr; s3://${bucket}`);
+    try{
+      const resUrl=await fetch(apiUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_upload_url',filename:file.name,bucket})});
+      const urlData=await resUrl.json();
+      if(urlData.error){markStep(step,'error',`Auth failed: ${urlData.error}`);continue;}
+      const res=await fetch(urlData.url,{method:'PUT',body:file,headers:{'Content-Type':'application/octet-stream'}});
+      if(res.ok){
+        markStep(step,'done',`${file.name} transmitted.`);
+        uploadedDatasets.push({filename:file.name,bucket});
+        removeFile(file.name);
+        document.getElementById('datasetCount').textContent=uploadedDatasets.length;
+        toast('Transmitted! AI embedding in background — wait ~3 min before querying.','success');
+      } else markStep(step,'error',`HTTP ${res.status}`);
+    }catch(err){markStep(step,'error',err.message);}
+  }
+  document.getElementById('uploadLoader').classList.remove('spinning');
+  updateUploadBtn();
+  setHeaderStatus('READY');
+  if(uploadedDatasets.length>0) document.getElementById('trainBtn').disabled=false;
+  setTimeout(hideFeed,6000);
+}
+
+// COLUMN PICKER
+async function openColumnPicker(){
+  const apiUrl=getApiUrl(), bucket=getBucket();
+  let columns=[];
+  const csv=uploadedDatasets.find(d=>/\.(csv|tsv)$/i.test(d.filename));
+  if(csv&&apiUrl){
+    try{
+      const res=await fetch(apiUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'columns',filename:csv.filename,bucket})});
+      const data=await res.json();
+      columns=data.columns||[];
+    }catch(e){}
+  }
+  const chips=document.getElementById('columnChips');
+  chips.innerHTML='';
+  columns.forEach(col=>{
+    const opt=document.createElement('div');
+    opt.className='col-chip';
+    opt.innerHTML=`<svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>${col}</span>`;
+    opt.onclick=()=>{
+      chips.querySelectorAll('.col-chip').forEach(c=>c.classList.remove('selected'));
+      opt.classList.add('selected');
+      document.getElementById('customColumnInput').value=col;
     };
-    el.innerHTML = `${icons[type] || icons.info}<span>${msg}</span>`;
-    document.getElementById('toastContainer').appendChild(el);
-    requestAnimationFrame(() => el.classList.add('visible'));
-    setTimeout(() => { el.classList.remove('visible'); setTimeout(() => el.remove(), 400); }, 5500);
+    chips.appendChild(opt);
+  });
+  document.getElementById('customColumnInput').value='';
+  document.getElementById('modalOverlay').classList.add('visible');
+  document.getElementById('customColumnInput').focus();
 }
 
-// ══════════════════════════════════════════════════
-//  TERMINAL FEED
-// ══════════════════════════════════════════════════
-function showFeed() { activityFeed.classList.add('visible'); }
-function hideFeed() { activityFeed.classList.remove('visible'); }
-function clearFeed() { activityFeed.innerHTML = ''; hideFeed(); }
+function closeModal(){document.getElementById('modalOverlay').classList.remove('visible');}
+function closeModalOnBackdrop(e){if(e.target===document.getElementById('modalOverlay'))closeModal();}
 
-function addStep(tag, label, state = 'active') {
-    showFeed();
-    const el = document.createElement('div');
-    el.className = `feed-row ${state}`;
-    const t = new Date().toLocaleTimeString('en', { hour12: false });
-    el.innerHTML = `<span class="feed-time">[${t}]</span><span class="feed-tag">${tag}</span><span class="feed-sep">&#8212;</span><span class="feed-msg">${label}</span>${state === 'active' ? '<span class="feed-blink">&#9646;</span>' : ''}`;
-    activityFeed.appendChild(el);
-    activityFeed.scrollTop = activityFeed.scrollHeight;
-    return el;
+// TRAINING
+async function startTraining(){
+  const col=document.getElementById('customColumnInput').value.trim();
+  if(!col) return;
+  closeModal(); saveSettings();
+  setHeaderStatus('EXECUTING PIPELINE...');
+  runCountVal++; document.getElementById('runCount').textContent=runCountVal;
+  const s1=addStep('INIT',`AutoML pipeline &raquo; target: ${col}`);
+  const s2=addStep('EXEC','Generating ML code via LLaMA 3.3 70B...');
+  try{
+    const res=await fetch(getApiUrl(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'train',bucket:getBucket(),target:col})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||data.message||`HTTP ${res.status}`);
+    if(data.error) throw new Error(data.error);
+    if(data.message&&!data.status) throw new Error(data.message);
+    markStep(s2,'done',`Pipeline complete &mdash; metric: ${data.final_metric}`);
+    const msg=document.createElement('div');
+    msg.className='msg msg-bot';
+    msg.innerHTML=`${BOT_AVT}<div class="msg-body"><div class="pipeline-card"><div class="pc-header"><div class="pc-badge">&#9646; PIPELINE COMPLETE</div><div class="pc-stats"><span>TARGET: <strong>${escHtml(col)}</strong></span><span>${data.metrics?.latency_ms||'--'}ms</span></div></div><div class="pc-section"><div class="pc-label">&gt; GENERATED CODE</div><div class="code-block"><code>${escHtml(data.generated_code)}</code></div></div><div class="pc-section"><div class="pc-label">&gt; EXECUTION OUTPUT</div><pre class="output-block">${escHtml(data.execution_logs)}</pre></div><div class="pc-metric"><span class="pc-metric-label">FINAL_METRIC</span><span class="pc-metric-val">${escHtml(String(data.final_metric))}</span></div></div></div>`;
+    chatHistory.appendChild(msg);
+    chatHistory.scrollTop=chatHistory.scrollHeight;
+  }catch(err){
+    markStep(s2,'error',err.message);
+    appendBotMsg(`**Execution Error:**\n\`\`\`\n${err.message}\n\`\`\``);
+  }
+  setHeaderStatus('READY');
 }
 
-function markStep(el, state, label = null) {
-    el.className = `feed-row ${state}`;
-    if (label) {
-        const t = new Date().toLocaleTimeString('en', { hour12: false });
-        el.innerHTML = `<span class="feed-time">[${t}]</span><span class="feed-tag">${state.toUpperCase()}</span><span class="feed-sep">&#8212;</span><span class="feed-msg">${label}</span>`;
+// CHAT
+async function sendMessage(){
+  const q=queryInput.value.trim();
+  if(!q||isThinking) return;
+  saveSettings(); hideWelcome();
+  queryCountVal++; document.getElementById('queryCount').textContent=queryCountVal;
+  const userEl=document.createElement('div');
+  userEl.className='msg msg-user';
+  userEl.innerHTML=`<div class="msg-avatar msg-avatar-user"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div><div class="msg-body msg-user-text">${escHtml(q)}</div>`;
+  chatHistory.appendChild(userEl);
+  queryInput.value=''; queryInput.style.height='auto';
+  chatHistory.scrollTop=chatHistory.scrollHeight;
+  isThinking=true; document.getElementById('sendBtn').classList.add('sending');
+  setHeaderStatus('QUERYING...');
+  const step=addStep('QUERY','Vectorizing &amp; searching database...');
+  const thinkEl=document.createElement('div');
+  thinkEl.className='msg msg-bot'; thinkEl.id='thinkBubble';
+  thinkEl.innerHTML=`${BOT_AVT}<div class="msg-body"><div class="think-dots"><span></span><span></span><span></span></div></div>`;
+  chatHistory.appendChild(thinkEl); chatHistory.scrollTop=chatHistory.scrollHeight;
+  try{
+    const res=await fetch(getApiUrl(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'chat',query:q,bucket:getBucket()})});
+    const data=await res.json();
+    document.getElementById('thinkBubble')?.remove();
+    markStep(step,'done','Response received');
+    if(data.intent==='train'){
+      appendBotMsg(`**&#9889; AutoML Triggered!** Detected intent to predict \`${data.target}\`. Booting pipeline...`);
+      document.getElementById('customColumnInput').value=data.target;
+      isThinking=false; document.getElementById('sendBtn').classList.remove('sending');
+      setTimeout(startTraining,600); return;
     }
+    if(res.ok) appendBotMsg(data.answer,data.context_used);
+    else appendBotMsg(`**API Error:** ${data.error||data.message||`HTTP ${res.status}`}`);
+  }catch(err){
+    document.getElementById('thinkBubble')?.remove();
+    markStep(step,'error',err.message);
+    appendBotMsg(`**Network Error:** ${err.message}`);
+  }
+  isThinking=false; document.getElementById('sendBtn').classList.remove('sending');
+  setHeaderStatus('READY');
 }
 
-// ══════════════════════════════════════════════════
-//  FILE SELECTION
-// ══════════════════════════════════════════════════
-const fileInput = document.getElementById('fileInput');
-const dropZone  = document.getElementById('dropZone');
-const fileList  = document.getElementById('fileList');
+const BOT_AVT=`<div class="msg-avatar msg-avatar-bot"><svg viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="8" stroke="url(#avt)" stroke-width="2"/><ellipse cx="20" cy="20" rx="18" ry="7" stroke="url(#avt)" stroke-width="1.2" opacity="0.7"/><ellipse cx="20" cy="20" rx="18" ry="7" stroke="url(#avt)" stroke-width="1.2" opacity="0.7" transform="rotate(60 20 20)"/><circle cx="20" cy="20" r="3" fill="url(#avt)"/><defs><linearGradient id="avt" x1="0" y1="0" x2="40" y2="40"><stop offset="0%" stop-color="#7B2FFF"/><stop offset="100%" stop-color="#00F5FF"/></linearGradient></defs></svg></div>`;
 
-fileInput.addEventListener('change', () => { addFiles([...fileInput.files]); fileInput.value = ''; });
-dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); addFiles([...e.dataTransfer.files]); });
-
-function getFileType(name) {
-    const ext = name.split('.').pop().toLowerCase();
-    if (['csv','tsv'].includes(ext)) return 'csv';
-    if (ext === 'zip') return 'zip';
-    if (['wav','mp3','m4a','flac'].includes(ext)) return 'audio';
-    if (['jpg','jpeg','png','bmp','webp'].includes(ext)) return 'image';
-    return 'file';
+function appendBotMsg(text,context){
+  const el=document.createElement('div');
+  el.className='msg msg-bot';
+  let body=`<div class="msg-rendered">${marked.parse(text)}</div>`;
+  if(context&&context.length){
+    body+=`<button class="ctx-toggle" onclick="this.nextElementSibling.classList.toggle('open')"><svg viewBox="0 0 24 24" style="width:12px;height:12px"><polyline points="6 9 12 15 18 9"/></svg>SOURCE ROWS (${context.length})</button><div class="ctx-data">${escHtml(JSON.stringify(context,null,2))}</div>`;
+  }
+  el.innerHTML=`${BOT_AVT}<div class="msg-body">${body}</div>`;
+  chatHistory.appendChild(el);
+  chatHistory.scrollTop=chatHistory.scrollHeight;
 }
 
-function getFileIcon(type) {
-    const icons = {
-        csv:   '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
-        zip:   '<svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>',
-        audio: '<svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
-        image: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
-        file:  '<svg viewBox="0 0 24 24"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>'
-    };
-    return icons[type] || icons.file;
-}
-
-function addFiles(files) {
-    files.forEach(f => {
-        if (uploadedFiles.find(x => x.name === f.name)) return;
-        uploadedFiles.push(f);
-        const type = getFileType(f.name);
-        const chip = document.createElement('div');
-        chip.className = `file-chip fc-${type}`;
-        chip.id = 'chip-' + f.name.replace(/[^a-zA-Z0-9]/g, '_');
-        chip.innerHTML = `
-            <span class="chip-icon">${getFileIcon(type)}</span>
-            <span class="chip-name" title="${f.name}">${f.name}</span>
-            <span class="chip-size">${(f.size/1024).toFixed(1)}KB</span>
-            <button class="chip-remove" onclick="removeFile('${f.name}')" aria-label="Remove ${f.name}">
-                <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
-        `;
-        fileList.appendChild(chip);
-    });
-    updateUploadBtn();
-}
-
-function removeFile(name) {
-    uploadedFiles = uploadedFiles.filter(f => f.name !== name);
-    document.getElementById('chip-' + name.replace(/[^a-zA-Z0-9]/g,'_'))?.remove();
-    updateUploadBtn();
-}
-
-function updateUploadBtn() {
-    document.getElementById('uploadBtn').disabled = uploadedFiles.length === 0;
-}
-
-// ══════════════════════════════════════════════════
-//  UPLOAD
-// ══════════════════════════════════════════════════
-async function uploadAllFiles() {
-    const apiUrl = getApiUrl();
-    const bucket = getBucket();
-    if (!apiUrl || !bucket) { toast('Missing API URL or Bucket', 'error'); return; }
-    saveSettings();
-
-    document.getElementById('uploadBtn').disabled = true;
-    document.getElementById('uploadLoader').classList.add('spinning');
-    setHeaderStatus('TRANSMITTING...');
-    hideWelcome();
-
-    for (const file of [...uploadedFiles]) {
-        const step = addStep('UPLOAD', `${file.name} &#8594; s3://${bucket}`);
-        try {
-            const resUrl = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'get_upload_url', filename: file.name, bucket })
-            });
-            const urlData = await resUrl.json();
-            if (urlData.error) { markStep(step, 'error', `Auth failed: ${urlData.error}`); continue; }
-            const res = await fetch(urlData.url, { method: 'PUT', body: file, headers: { 'Content-Type': 'application/octet-stream' } });
-            if (res.ok) {
-                markStep(step, 'done', `${file.name} transmitted.`);
-                uploadedDatasets.push({ filename: file.name, bucket });
-                removeFile(file.name);
-                document.getElementById('datasetCount').textContent = uploadedDatasets.length;
-                toast('Transmitted! AI embedding in background — wait ~3 min before querying.', 'success');
-            } else {
-                markStep(step, 'error', `HTTP ${res.status}`);
-            }
-        } catch (err) { markStep(step, 'error', err.message); }
-    }
-
-    document.getElementById('uploadLoader').classList.remove('spinning');
-    updateUploadBtn();
-    setHeaderStatus('READY');
-    if (uploadedDatasets.length > 0) document.getElementById('trainBtn').disabled = false;
-    setTimeout(hideFeed, 6000);
-}
-
-// ══════════════════════════════════════════════════
-//  COLUMN PICKER
-// ══════════════════════════════════════════════════
-async function openColumnPicker() {
-    const apiUrl = getApiUrl();
-    const bucket = getBucket();
-    let columns = [];
-    const csv = uploadedDatasets.find(d => /\.(csv|tsv)$/i.test(d.filename));
-    if (csv && apiUrl) {
-        try {
-            const res = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'columns', filename: csv.filename, bucket }) });
-            const data = await res.json();
-            columns = data.columns || [];
-        } catch(e) {}
-    }
-    const chips = document.getElementById('columnChips');
-    chips.innerHTML = '';
-    columns.forEach(col => {
-        const opt = document.createElement('div');
-        opt.className = 'col-chip';
-        opt.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>${col}</span>`;
-        opt.onclick = () => {
-            chips.querySelectorAll('.col-chip').forEach(c => c.classList.remove('selected'));
-            opt.classList.add('selected');
-            document.getElementById('customColumnInput').value = col;
-        };
-        chips.appendChild(opt);
-    });
-    document.getElementById('customColumnInput').value = '';
-    document.getElementById('modalOverlay').classList.add('visible');
-    document.getElementById('customColumnInput').focus();
-}
-
-function closeModal() { document.getElementById('modalOverlay').classList.remove('visible'); }
-function closeModalOnBackdrop(e) { if (e.target === document.getElementById('modalOverlay')) closeModal(); }
-
-// ══════════════════════════════════════════════════
-//  TRAINING
-// ══════════════════════════════════════════════════
-async function startTraining() {
-    const col = document.getElementById('customColumnInput').value.trim();
-    if (!col) return;
-    closeModal();
-    saveSettings();
-    setHeaderStatus('EXECUTING PIPELINE...');
-    runCountVal++;
-    document.getElementById('runCount').textContent = runCountVal;
-
-    const s1 = addStep('INIT', `AutoML pipeline &#187; target: ${col}`);
-    const s2 = addStep('EXEC', 'Generating ML code via LLaMA 3.3 70B...');
-
-    try {
-        const res = await fetch(getApiUrl(), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'train', bucket: getBucket(), target: col })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || data.message || `HTTP ${res.status}`);
-        if (data.error) throw new Error(data.error);
-        if (data.message && !data.status) throw new Error(data.message);
-
-        markStep(s2, 'done', `Pipeline complete &#8212; metric: ${data.final_metric}`);
-
-        const msg = document.createElement('div');
-        msg.className = 'msg msg-bot';
-        msg.innerHTML = `
-            <div class="msg-avatar msg-avatar-bot" aria-hidden="true">
-                <svg viewBox="0 0 40 40" fill="none">
-                    <circle cx="20" cy="20" r="8" stroke="url(#pg1)" stroke-width="2"/>
-                    <ellipse cx="20" cy="20" rx="18" ry="7" stroke="url(#pg1)" stroke-width="1.2" opacity="0.7"/>
-                    <ellipse cx="20" cy="20" rx="18" ry="7" stroke="url(#pg1)" stroke-width="1.2" opacity="0.7" transform="rotate(60 20 20)"/>
-                    <circle cx="20" cy="20" r="3" fill="url(#pg1)"/>
-                    <defs><linearGradient id="pg1" x1="0" y1="0" x2="40" y2="40"><stop offset="0%" stop-color="#7B2FFF"/><stop offset="100%" stop-color="#00F5FF"/></linearGradient></defs>
-                </svg>
-            </div>
-            <div class="msg-body">
-                <div class="pipeline-card">
-                    <div class="pc-header">
-                        <div class="pc-badge">&#9646; PIPELINE COMPLETE</div>
-                        <div class="pc-stats">
-                            <span>TARGET: <strong>${escHtml(col)}</strong></span>
-                            <span>${data.metrics?.latency_ms || '--'}ms</span>
-                        </div>
-                    </div>
-                    <div class="pc-section">
-                        <div class="pc-label">&#62; GENERATED CODE</div>
-                        <pre class="code-block"><code>${escHtml(data.generated_code)}</code></pre>
-                    </div>
-                    <div class="pc-section">
-                        <div class="pc-label">&#62; EXECUTION OUTPUT</div>
-                        <pre class="output-block">${escHtml(data.execution_logs)}</pre>
-                    </div>
-                    <div class="pc-metric">
-                        <span class="pc-metric-label">FINAL_METRIC</span>
-                        <span class="pc-metric-val">${escHtml(String(data.final_metric))}</span>
-                    </div>
-                </div>
-            </div>
-        `;
-        chatHistory.appendChild(msg);
-        chatHistory.scrollTop = chatHistory.scrollHeight;
-    } catch(err) {
-        markStep(s2, 'error', err.message);
-        appendBotMsg(`**Execution Error:**\n\`\`\`\n${err.message}\n\`\`\``);
-    }
-    setHeaderStatus('READY');
-}
-
-// ══════════════════════════════════════════════════
-//  CHAT
-// ══════════════════════════════════════════════════
-async function sendMessage() {
-    const q = queryInput.value.trim();
-    if (!q || isThinking) return;
-    saveSettings();
-    hideWelcome();
-    queryCountVal++;
-    document.getElementById('queryCount').textContent = queryCountVal;
-
-    const userEl = document.createElement('div');
-    userEl.className = 'msg msg-user';
-    userEl.innerHTML = `
-        <div class="msg-avatar msg-avatar-user" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        </div>
-        <div class="msg-body msg-user-text">${escHtml(q)}</div>
-    `;
-    chatHistory.appendChild(userEl);
-    queryInput.value = '';
-    queryInput.style.height = 'auto';
-    chatHistory.scrollTop = chatHistory.scrollHeight;
-
-    isThinking = true;
-    document.getElementById('sendBtn').classList.add('sending');
-    setHeaderStatus('QUERYING...');
-    const step = addStep('QUERY', 'Vectorizing &amp; searching database...');
-
-    const thinkEl = document.createElement('div');
-    thinkEl.className = 'msg msg-bot';
-    thinkEl.id = 'thinkBubble';
-    thinkEl.innerHTML = `
-        <div class="msg-avatar msg-avatar-bot" aria-hidden="true">
-            <svg viewBox="0 0 40 40" fill="none">
-                <circle cx="20" cy="20" r="8" stroke="url(#tg1)" stroke-width="2"/>
-                <ellipse cx="20" cy="20" rx="18" ry="7" stroke="url(#tg1)" stroke-width="1.2" opacity="0.7"/>
-                <circle cx="20" cy="20" r="3" fill="url(#tg1)"/>
-                <defs><linearGradient id="tg1" x1="0" y1="0" x2="40" y2="40"><stop offset="0%" stop-color="#7B2FFF"/><stop offset="100%" stop-color="#00F5FF"/></linearGradient></defs>
-            </svg>
-        </div>
-        <div class="msg-body"><div class="think-dots"><span></span><span></span><span></span></div></div>
-    `;
-    chatHistory.appendChild(thinkEl);
-    chatHistory.scrollTop = chatHistory.scrollHeight;
-
-    try {
-        const res = await fetch(getApiUrl(), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'chat', query: q, bucket: getBucket() })
-        });
-        const data = await res.json();
-        document.getElementById('thinkBubble')?.remove();
-        markStep(step, 'done', 'Response received');
-
-        if (data.intent === 'train') {
-            appendBotMsg(`**&#9889; AutoML Triggered!** Detected intent to predict \`${data.target}\`. Booting pipeline...`);
-            document.getElementById('customColumnInput').value = data.target;
-            isThinking = false;
-            document.getElementById('sendBtn').classList.remove('sending');
-            setTimeout(startTraining, 600);
-            return;
-        }
-
-        if (res.ok) {
-            appendBotMsg(data.answer, data.context_used);
-        } else {
-            appendBotMsg(`**API Error:** ${data.error || data.message || `HTTP ${res.status}`}`);
-        }
-    } catch(err) {
-        document.getElementById('thinkBubble')?.remove();
-        markStep(step, 'error', err.message);
-        appendBotMsg(`**Network Error:** ${err.message}`);
-    }
-    isThinking = false;
-    document.getElementById('sendBtn').classList.remove('sending');
-    setHeaderStatus('READY');
-}
-
-const BOT_AVATAR = `<div class="msg-avatar msg-avatar-bot" aria-hidden="true">
-    <svg viewBox="0 0 40 40" fill="none">
-        <circle cx="20" cy="20" r="8" stroke="url(#ag)" stroke-width="2"/>
-        <ellipse cx="20" cy="20" rx="18" ry="7" stroke="url(#ag)" stroke-width="1.2" opacity="0.7"/>
-        <ellipse cx="20" cy="20" rx="18" ry="7" stroke="url(#ag)" stroke-width="1.2" opacity="0.7" transform="rotate(60 20 20)"/>
-        <circle cx="20" cy="20" r="3" fill="url(#ag)"/>
-        <defs><linearGradient id="ag" x1="0" y1="0" x2="40" y2="40"><stop offset="0%" stop-color="#7B2FFF"/><stop offset="100%" stop-color="#00F5FF"/></linearGradient></defs>
-    </svg>
-</div>`;
-
-function appendBotMsg(text, context) {
-    const el = document.createElement('div');
-    el.className = 'msg msg-bot';
-    let bodyHtml = `<div class="msg-rendered">${marked.parse(text)}</div>`;
-    if (context && context.length) {
-        const cid = 'ctx-' + Date.now();
-        bodyHtml += `
-            <button class="ctx-toggle" onclick="this.nextElementSibling.classList.toggle('open')">
-                <svg viewBox="0 0 24 24" style="width:12px;height:12px;"><polyline points="6 9 12 15 18 9"/></svg>
-                SOURCE ROWS (${context.length})
-            </button>
-            <div class="ctx-data">${escHtml(JSON.stringify(context, null, 2))}</div>
-        `;
-    }
-    el.innerHTML = `${BOT_AVATAR}<div class="msg-body">${bodyHtml}</div>`;
-    chatHistory.appendChild(el);
-    chatHistory.scrollTop = chatHistory.scrollHeight;
-}
-
-function hideWelcome() {
-    const ws = document.getElementById('welcomeState');
-    if (ws) ws.remove();
-}
-
-function escHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+function hideWelcome(){const w=document.getElementById('welcomeState');if(w)w.remove();}
+function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 </script>
 </body>
 </html>
