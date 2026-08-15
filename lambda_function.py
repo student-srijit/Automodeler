@@ -1,5 +1,6 @@
 import json
 import urllib.parse
+import uuid
 import os
 
 # AWS Lambda filesystem is strictly read-only except for /tmp.
@@ -1091,11 +1092,49 @@ def lambda_handler(event, context):
                 bucket = body.get('bucket', '')
                 if not target or not bucket:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Missing target column or bucket'})}
+                
+                is_async_job = body.get('is_async_job', False)
+                job_id = body.get('job_id')
+
+                # If this is the initial request from API Gateway, spawn the background task immediately!
+                if not is_async_job:
+                    job_id = str(uuid.uuid4())
+                    lambda_client = boto3.client('lambda')
+                    # Build payload for background invocation
+                    async_payload = event.copy()
+                    
+                    # Update body to include async flags
+                    body_dict = json.loads(async_payload.get('body', '{}'))
+                    body_dict['is_async_job'] = True
+                    body_dict['job_id'] = job_id
+                    async_payload['body'] = json.dumps(body_dict)
+                    
+                    try:
+                        lambda_client.invoke(
+                            FunctionName=os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'roy-lambda'),
+                            InvocationType='Event',
+                            Payload=json.dumps(async_payload)
+                        )
+                        print(f">>> Spawned background job {job_id}")
+                        return {
+                            'statusCode': 202,
+                            'headers': headers,
+                            'body': json.dumps({'status': 'processing', 'job_id': job_id})
+                        }
+                    except Exception as e:
+                        return {'statusCode': 500, 'headers': headers, 'body': json.dumps({'error': f"Failed to spawn background task: {e}"})}
+
+                # --- This runs ONLY in the background task (is_async_job == True) ---
+                print(f">>> Running background job {job_id} for target {target}")
+                
                 try:
                     state_response = s3.get_object(Bucket=bucket, Key="agent_memory_state.txt")
                     db_url = state_response['Body'].read().decode('utf-8').strip()
                 except Exception as e:
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Could not find database state. Have you uploaded a dataset yet?'})}
+                    # Upload error to S3 so frontend polling picks it up
+                    err_resp = {'error': 'Could not find database state. Have you uploaded a dataset yet?'}
+                    s3.put_object(Bucket=bucket, Key=f"jobs/{job_id}.json", Body=json.dumps(err_resp))
+                    return {'statusCode': 400, 'body': ''}
                 
                 # Smart Data Router: Find the CSV that actually contains the target column
                 filename = None
@@ -1104,7 +1143,7 @@ def lambda_handler(event, context):
                     import io
                     objs = s3.list_objects_v2(Bucket=bucket)
                     for o in objs.get('Contents', []):
-                        if o['Key'].endswith('.csv'):
+                        if o['Key'].endswith('.csv') and not o['Key'].startswith('jobs/'):
                             try:
                                 obj = s3.get_object(Bucket=bucket, Key=o['Key'], Range='bytes=0-4096')
                                 df_head = pd.read_csv(io.BytesIO(obj['Body'].read()), nrows=0)
@@ -1118,14 +1157,49 @@ def lambda_handler(event, context):
                     print(f"Smart Router failed: {e}")
                     
                 if not filename:
-                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': f"Target column '{target}' not found in any uploaded CSV files."})}
+                    err_resp = {'error': f"Target column '{target}' not found in any uploaded CSV files."}
+                    s3.put_object(Bucket=bucket, Key=f"jobs/{job_id}.json", Body=json.dumps(err_resp))
+                    return {'statusCode': 400, 'body': ''}
                     
                 response = handle_automl_train(target, db_url, bucket, filename)
-                return {
-                    'statusCode': 200 if 'error' not in response else 400,
-                    'headers': headers,
-                    'body': json.dumps(response)
-                }
+                
+                # Save the final result to S3 for the frontend to poll!
+                try:
+                    s3.put_object(Bucket=bucket, Key=f"jobs/{job_id}.json", Body=json.dumps(response))
+                    print(f">>> Successfully saved job {job_id} to S3!")
+                except Exception as e:
+                    print(f">>> Failed to save job {job_id} to S3: {e}")
+                    
+                return {'statusCode': 200, 'body': 'Background task complete'}
+                
+            if action == 'check_job':
+                job_id = body.get('job_id')
+                bucket = body.get('bucket')
+                if not job_id or not bucket:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Missing job_id or bucket'})}
+                
+                try:
+                    obj = s3.get_object(Bucket=bucket, Key=f"jobs/{job_id}.json")
+                    result_data = json.loads(obj['Body'].read().decode('utf-8'))
+                    
+                    # Delete the job file to clean up space
+                    try:
+                        s3.delete_object(Bucket=bucket, Key=f"jobs/{job_id}.json")
+                    except Exception:
+                        pass
+                        
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps(result_data)
+                    }
+                except Exception as e:
+                    # If file doesn't exist yet, it's still processing!
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'status': 'processing'})
+                    }
                 
             # action == 'chat'
             user_query = body.get('query', '')

@@ -799,13 +799,68 @@ async function startTraining(){
   setHeaderStatus('EXECUTING PIPELINE...');
   runCountVal++; document.getElementById('runCount').textContent=runCountVal;
   const s1=addStep('INIT',`AutoML pipeline &raquo; target: ${col}`);
-  const s2=addStep('EXEC','Generating ML code via LLaMA 3.3 70B...');
-  try{
-    const res=await fetch(getApiUrl(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'train',bucket:getBucket(),target:col})});
-    const data=await res.json();
+  const s2=addStep('EXEC','Spawning background ML agents...');
+  let jobId = null;
+  
+  try {
+    const res = await fetch(getApiUrl(), {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({action:'train', bucket:getBucket(), target:col})
+    });
+    const data = await res.json();
     if(!res.ok) throw new Error(data.error||data.message||`HTTP ${res.status}`);
     if(data.error) throw new Error(data.error);
     if(data.message&&!data.status) throw new Error(data.message);
+    
+    if(data.status === 'processing' && data.job_id) {
+        jobId = data.job_id;
+        markStep(s2, 'info', `AI reasoning in background... (ID: ${jobId.substring(0,8)})`);
+    } else {
+        // Fallback if not async
+        renderTrainingResult(data, col, s2);
+        return;
+    }
+  } catch(err) {
+    markStep(s2, 'error', err.message);
+    appendBotMsg(`**Execution Error:**\n\`\`\`\n${err.message}\n\`\`\``);
+    setHeaderStatus('READY');
+    return;
+  }
+
+  // Polling Loop
+  let pollSeconds = 0;
+  const pollInterval = setInterval(async () => {
+      pollSeconds += 3;
+      markStep(s2, 'info', `AI is reasoning... (${pollSeconds}s elapsed)`);
+      try {
+          const pollRes = await fetch(getApiUrl(), {
+              method: 'POST',
+              headers: {'Content-Type':'application/json'},
+              body: JSON.stringify({action:'check_job', bucket:getBucket(), job_id: jobId})
+          });
+          const pollData = await pollRes.json();
+          
+          if(pollData.status === 'processing') {
+              // still processing, wait
+              return;
+          }
+          
+          // Finished!
+          clearInterval(pollInterval);
+          if(!pollRes.ok || pollData.error) throw new Error(pollData.error || `HTTP ${pollRes.status}`);
+          
+          renderTrainingResult(pollData, col, s2);
+      } catch(err) {
+          clearInterval(pollInterval);
+          markStep(s2, 'error', err.message);
+          appendBotMsg(`**Execution Error:**\n\`\`\`\n${err.message}\n\`\`\``);
+          setHeaderStatus('READY');
+      }
+  }, 3000);
+}
+
+function renderTrainingResult(data, col, s2) {
     markStep(s2,'done',`Pipeline complete &mdash; metric: ${data.final_metric} (Rounds: ${data.rounds_taken||1})`);
     
     let reasoningHtml = '';
@@ -835,11 +890,7 @@ async function startTraining(){
     msg.innerHTML=`${BOT_AVT}<div class="msg-body"><div class="pipeline-card"><div class="pc-header"><div class="pc-badge">&#9646; PIPELINE COMPLETE</div><div class="pc-stats"><span>TARGET: <strong>${escHtml(col)}</strong></span><span>ROUNDS: <strong>${data.rounds_taken||1}</strong></span><span>${data.metrics?.latency_ms||'--'}ms</span></div></div><div class="pc-section"><div class="pc-label">&gt; GENERATED CODE (FINAL)</div><div class="code-block"><code>${escHtml(data.generated_code)}</code></div></div><div class="pc-section"><div class="pc-label">&gt; EXECUTION OUTPUT</div><pre class="output-block">${escHtml(data.execution_logs)}</pre></div>${historyHtml}${reasoningHtml}<div class="pc-metric"><span class="pc-metric-label">FINAL_METRIC</span><span class="pc-metric-val">${escHtml(String(data.final_metric))}</span></div></div></div>`;
     chatHistory.appendChild(msg);
     chatHistory.scrollTop=chatHistory.scrollHeight;
-  }catch(err){
-    markStep(s2,'error',err.message);
-    appendBotMsg(`**Execution Error:**\n\`\`\`\n${err.message}\n\`\`\``);
-  }
-  setHeaderStatus('READY');
+    setHeaderStatus('READY');
 }
 
 // CHAT
