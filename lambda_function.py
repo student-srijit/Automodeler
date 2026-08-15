@@ -1142,49 +1142,56 @@ def lambda_handler(event, context):
                 print(f">>> Running background job {job_id} for target {target}")
                 
                 try:
-                    state_response = s3.get_object(Bucket=bucket, Key="agent_memory_state.txt")
-                    db_url = state_response['Body'].read().decode('utf-8').strip()
+                    try:
+                        state_response = s3.get_object(Bucket=bucket, Key="agent_memory_state.txt")
+                        db_url = state_response['Body'].read().decode('utf-8').strip()
+                    except Exception as e:
+                        # Upload error to S3 so frontend polling picks it up
+                        err_resp = {'error': 'Could not find database state. Have you uploaded a dataset yet?'}
+                        s3.put_object(Bucket=bucket, Key=f"jobs/{job_id}.json", Body=json.dumps(err_resp))
+                        return {'statusCode': 400, 'body': ''}
+                    
+                    # Smart Data Router: Find the CSV that actually contains the target column
+                    filename = None
+                    try:
+                        import pandas as pd
+                        import io
+                        objs = s3.list_objects_v2(Bucket=bucket)
+                        for o in objs.get('Contents', []):
+                            if o['Key'].endswith('.csv') and not o['Key'].startswith('jobs/'):
+                                try:
+                                    obj = s3.get_object(Bucket=bucket, Key=o['Key'], Range='bytes=0-4096')
+                                    df_head = pd.read_csv(io.BytesIO(obj['Body'].read()), nrows=0)
+                                    if target in df_head.columns:
+                                        filename = o['Key']
+                                        print(f">>> Smart Router: Selected {filename} for target {target}")
+                                        break
+                                except:
+                                    pass
+                    except Exception as e:
+                        print(f"Smart Router failed: {e}")
+                        
+                    if not filename:
+                        err_resp = {'error': f"Target column '{target}' not found in any uploaded CSV files."}
+                        s3.put_object(Bucket=bucket, Key=f"jobs/{job_id}.json", Body=json.dumps(err_resp))
+                        return {'statusCode': 400, 'body': ''}
+                        
+                    response = handle_automl_train(target, db_url, bucket, filename, job_id=job_id)
+                    
+                    # Save the final result to S3 for the frontend to poll!
+                    try:
+                        s3.put_object(Bucket=bucket, Key=f"jobs/{job_id}.json", Body=json.dumps(response))
+                        print(f">>> Successfully saved job {job_id} to S3!")
+                    except Exception as e:
+                        print(f">>> Failed to save job {job_id} to S3: {e}")
+                        
+                    return {'statusCode': 200, 'body': 'Background task complete'}
                 except Exception as e:
-                    # Upload error to S3 so frontend polling picks it up
-                    err_resp = {'error': 'Could not find database state. Have you uploaded a dataset yet?'}
+                    print(f">>> Background task CRASHED: {e}")
+                    traceback.print_exc()
+                    err_resp = {'error': f"Background task failed abruptly: {e}"}
                     s3.put_object(Bucket=bucket, Key=f"jobs/{job_id}.json", Body=json.dumps(err_resp))
-                    return {'statusCode': 400, 'body': ''}
-                
-                # Smart Data Router: Find the CSV that actually contains the target column
-                filename = None
-                try:
-                    import pandas as pd
-                    import io
-                    objs = s3.list_objects_v2(Bucket=bucket)
-                    for o in objs.get('Contents', []):
-                        if o['Key'].endswith('.csv') and not o['Key'].startswith('jobs/'):
-                            try:
-                                obj = s3.get_object(Bucket=bucket, Key=o['Key'], Range='bytes=0-4096')
-                                df_head = pd.read_csv(io.BytesIO(obj['Body'].read()), nrows=0)
-                                if target in df_head.columns:
-                                    filename = o['Key']
-                                    print(f">>> Smart Router: Selected {filename} for target {target}")
-                                    break
-                            except:
-                                pass
-                except Exception as e:
-                    print(f"Smart Router failed: {e}")
-                    
-                if not filename:
-                    err_resp = {'error': f"Target column '{target}' not found in any uploaded CSV files."}
-                    s3.put_object(Bucket=bucket, Key=f"jobs/{job_id}.json", Body=json.dumps(err_resp))
-                    return {'statusCode': 400, 'body': ''}
-                    
-                response = handle_automl_train(target, db_url, bucket, filename, job_id=job_id)
-                
-                # Save the final result to S3 for the frontend to poll!
-                try:
-                    s3.put_object(Bucket=bucket, Key=f"jobs/{job_id}.json", Body=json.dumps(response))
-                    print(f">>> Successfully saved job {job_id} to S3!")
-                except Exception as e:
-                    print(f">>> Failed to save job {job_id} to S3: {e}")
-                    
-                return {'statusCode': 200, 'body': 'Background task complete'}
+                    return {'statusCode': 500, 'body': str(e)}
                 
             if action == 'check_job':
                 job_id = body.get('job_id')

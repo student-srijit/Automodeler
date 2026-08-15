@@ -830,6 +830,9 @@ async function startTraining(){
 
   // Polling Loop
   let pollSeconds = 0;
+  let thoughtLog = [];
+  let lastMsg = "";
+  
   const pollInterval = setInterval(async () => {
       pollSeconds += 3;
       try {
@@ -843,7 +846,23 @@ async function startTraining(){
           if(pollData.status === 'processing') {
               // still processing, wait
               let msg = pollData.message || "Agent reasoning in progress...";
-              markStep(s2, 'info', `<span style="color:var(--neon-cyan)">[${pollSeconds}s]</span> ${escHtml(msg)} <span class="pulsing-cursor">_</span>`);
+              if (msg !== lastMsg) {
+                  thoughtLog.push(`[${pollSeconds}s] ${msg}`);
+                  lastMsg = msg;
+              }
+              
+              let thoughtsHtml = thoughtLog.map(t => `<div class="thought-line">${escHtml(t)}</div>`).join('');
+              
+              let html = `
+                <details class="copilot-thought">
+                  <summary><span class="thought-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg></span><span style="color:var(--neon-cyan)">[${pollSeconds}s]</span> ${escHtml(msg)} <span class="pulsing-cursor">_</span></summary>
+                  <div class="thought-content">${thoughtsHtml}</div>
+                </details>
+              `;
+              
+              // We need to bypass the standard markStep wrapper to allow full HTML rendering of the details block
+              s2.className = `term-step term-info`;
+              s2.innerHTML = html;
               return;
           }
           

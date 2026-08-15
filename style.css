@@ -1260,6 +1260,57 @@ svg {
     50% { opacity: 0; }
 }
 
+.copilot-thought {
+    margin-top: 4px;
+    margin-bottom: 4px;
+    background: rgba(123, 47, 255, 0.04);
+    border: 1px solid rgba(123, 47, 255, 0.15);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.copilot-thought summary {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    cursor: pointer;
+    list-style: none; /* hide default marker */
+    user-select: none;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.copilot-thought summary::-webkit-details-marker { display: none; }
+.copilot-thought summary:hover { background: rgba(123, 47, 255, 0.08); color: var(--text-primary); }
+
+.thought-arrow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 8px;
+    transition: transform 0.2s ease;
+}
+.thought-arrow svg {
+    width: 12px; height: 12px;
+}
+.copilot-thought[open] .thought-arrow {
+    transform: rotate(90deg);
+}
+
+.thought-content {
+    padding: 10px 12px 12px 28px;
+    border-top: 1px solid rgba(123, 47, 255, 0.1);
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.6;
+    background: rgba(0, 0, 0, 0.2);
+}
+.thought-line {
+    margin-bottom: 4px;
+}
+.thought-line:last-child {
+    margin-bottom: 0;
+}
+
 /* ----------------------------------------------------------
    MODAL
    ---------------------------------------------------------- */
