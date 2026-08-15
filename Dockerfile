@@ -6,8 +6,8 @@ ENV XDG_CACHE_HOME=/tmp
 ENV HF_HOME=/var/task/hf_cache
 ENV TORCH_HOME=/var/task/torch_cache
 
-# Install build tools and tar/gzip (needed for ccloud)
-RUN yum install -y gcc gcc-c++ tar gzip && yum clean all
+# Install build tools, C-dependencies for audio/image processing, and tar/gzip (needed for ccloud)
+RUN yum install -y gcc gcc-c++ cmake libsndfile tar gzip zlib-devel libjpeg-devel && yum clean all
 
 # Install CockroachDB ccloud CLI (CRITICAL for autonomous provisioning)
 RUN curl -sL https://binaries.cockroachdb.com/ccloud/ccloud_linux-amd64_0.3.0.tar.gz | tar -xz && \
@@ -17,7 +17,9 @@ RUN curl -sL https://binaries.cockroachdb.com/ccloud/ccloud_linux-amd64_0.3.0.ta
 # Install CPU-only PyTorch FIRST (avoids pulling 3.5GB of CUDA/cuDNN libs)
 RUN pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
 
-# Install remaining dependencies
+# Install pre-compiled soxr wheel to bypass C++ compilation failure
+RUN pip install --no-deps https://files.pythonhosted.org/packages/2b/97/cbce72f9c8b5c9c667eb55dc55be20a87c610dba55c0466c77498c1a8c97/soxr-0.3.7-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+
 COPY requirements.txt .
 RUN pip install --upgrade pip --no-cache-dir && \
     pip install -r requirements.txt --no-cache-dir
