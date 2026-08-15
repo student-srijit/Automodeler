@@ -3,9 +3,8 @@ import urllib.parse
 import os
 
 # AWS Lambda filesystem is strictly read-only except for /tmp.
-# We must redirect all cache and config files to /tmp to prevent Errno 30 crashes.
+# We must redirect HOME to /tmp to prevent Errno 30 crashes for standard tools.
 os.environ['HOME'] = '/tmp'
-os.environ['HF_HOME'] = '/tmp/huggingface'
 
 import csv
 import re
@@ -234,6 +233,12 @@ def generate_schema(profile):
 def deploy_schema(schema):
     conn = get_db_conn()
     with conn.cursor() as cur:
+        # Drop all existing tables in the public schema to ensure a clean slate
+        cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';")
+        existing_tables = cur.fetchall()
+        for (tbl,) in existing_tables:
+            cur.execute(f'DROP TABLE IF EXISTS "{tbl}" CASCADE;')
+            
         for tbl_def in schema["tables"]:
             print(f"Ensuring table exists: {tbl_def['table_name']}")
             create_sql = tbl_def["create_table_sql"].replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
@@ -430,6 +435,19 @@ def handle_agent_chat(user_query, db_url):
     if db_url:
         os.environ["DATABASE_URL"] = db_url
 
+    # 0. Intent Routing
+    try:
+        groq_client = Groq(api_key=os.environ['GROQ_API_KEY'])
+        intent_res = groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": f"Does this user want to train an ML model or predict something? User: '{user_query}'\nIf YES, extract the exact name of the target column they want to predict and output JUST the column name (e.g. 'Course', 'Price', 'Category'). If NO, output 'NO_INTENT'."}],
+            model="llama-3.3-70b-versatile", temperature=0.1
+        )
+        intent_ans = intent_res.choices[0].message.content.strip()
+        if "NO_INTENT" not in intent_ans.upper() and len(intent_ans) < 30:
+            return {"intent": "train", "target": intent_ans.strip(" '\"")}
+    except Exception as e:
+        print(f"Intent routing failed: {e}")
+
     # 1. Embed user query
     model = get_model()
     query_vector = model.encode(user_query).tolist()
@@ -473,15 +491,21 @@ def handle_agent_chat(user_query, db_url):
                 row_dict = dict(zip(cols, row))
                 if 'embedding' in row_dict:
                     del row_dict['embedding']
+                for k, v in row_dict.items():
+                    if type(v).__name__ in ['datetime', 'date', 'Timestamp']:
+                        row_dict[k] = str(v)
                 context_rows.append(row_dict)
     except Exception as e:
         print(f"Vector search failed: {e}")
     finally:
         conn.close()
         
+    if not context_rows:
+        return {"answer": "Your dataset is currently being processed by the AI in the background! Please wait approximately 3 minutes for the data to finish vectorizing before asking questions."}
+        
     # 4. Groq response
     client = Groq(api_key=os.environ['GROQ_API_KEY'])
-    prompt = f"User Question: {user_query}\n\nContext from Database:\n{json.dumps(context_rows, indent=2)}\n\nAnswer the question based ONLY on the context provided. Format your response beautifully using Markdown. Use bullet points for listing products, bold text for product names, and short paragraphs to make it highly readable and organized for a normal user."
+    prompt = f"User Question: {user_query}\n\nContext from Database:\n{json.dumps(context_rows, indent=2)}\n\nAnswer the question based ONLY on the context provided. Format your response beautifully using Markdown. Use bullet points for listing data fields, bold text for key names, and short paragraphs to make it highly readable and organized for a normal user."
     
     response = client.chat.completions.create(
         messages=[{"role": "user", "content": prompt}],
@@ -576,6 +600,15 @@ Output ONLY the raw Python code. Do not use markdown blocks. Just pure code.
 
     metric_match = re.search(r'FINAL_METRIC:\s*(.+)', execution_output)
     final_metric = metric_match.group(1) if metric_match else "Metric output not found."
+    
+    if os.path.exists('/tmp/submission.csv'):
+        try:
+            s3 = boto3.client('s3')
+            s3.upload_file('/tmp/submission.csv', bucket, 'submission.csv')
+            execution_output += "\n[SYSTEM] Successfully uploaded /tmp/submission.csv to S3!"
+        except Exception as e:
+            execution_output += f"\n[SYSTEM] Failed to upload /tmp/submission.csv to S3: {e}"
+            
     latency_ms = int((time.time() - start_time) * 1000)
     return {
         "status": "success",
@@ -703,22 +736,36 @@ Here is a sample of the data:
 {json.dumps(sample_data, indent=2)}
 
 REQUIREMENTS FOR YOUR STRATEGY:
-1. The dataset will be `train.csv` and `test.csv` in the current directory.
+1. The dataset will be `/tmp/train.csv` and `/tmp/test.csv`.
 2. We need to find the top 10 most similar rows in the training dataset for each row in the test dataset.
 3. Suggest the optimal feature extraction (e.g., TfidfVectorizer for text, StandardScaler for numeric).
 4. Suggest the optimal model (sklearn.neighbors.NearestNeighbors) to find the 10 nearest neighbors.
 5. The training set has an `Index` column. The output should map to training `Index` values, not array indices.
-6. Save to `submission.csv` with columns `Index` (from test) and `Index_list` (python list of 10 `Index` ints from train).
+6. Save to `/tmp/submission.csv` with columns `Index` (from test) and `Index_list` (python list of 10 `Index` ints from train).
 
 Write a clear, detailed algorithmic blueprint. Do NOT write Python code yet.
 """
 
     coder_context = f"""
 Write a standalone Python script using scikit-learn that implements this strategy.
-Assume `train.csv` and `test.csv` are in the current directory.
+Assume `train.csv` and `test.csv` are located at `/tmp/train.csv` and `/tmp/test.csv`.
+Save the output to `/tmp/submission.csv`.
+CRITICAL RULES:
+1. Do NOT drop the '{target_column}' column. You likely need it to generate features.
+2. If you must drop columns, always use `errors='ignore'` (e.g. `df.drop(columns=['...'], errors='ignore')`).
+3. Only use feature columns that exist in BOTH `train.csv` and `test.csv`.
+4. IMPORTANT FOR SPEED: You MUST sample the training data using `train_df = train_df.head(2000)` immediately after reading it to prevent execution timeouts!
 Column reference (first 10 rows sample):
 {json.dumps(sample_data, indent=2)}
 """
+
+    # Download datasets to /tmp/ for Lambda execution
+    try:
+        s3.download_file(bucket, "train.csv", "/tmp/train.csv")
+        s3.download_file(bucket, "test.csv", "/tmp/test.csv")
+    except Exception as e:
+        print(f"Warning: Failed to download train/test CSVs to /tmp: {e}")
+
     result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time)
     result['target_column'] = target_column
     result['modality'] = 'tabular'
@@ -750,6 +797,29 @@ def lambda_handler(event, context):
             raw_body = event.get('body') or '{}'
             body = json.loads(raw_body)
             action = body.get('action', 'chat')
+            
+            if action == 'get_upload_url':
+                filename = body.get('filename')
+                bucket = body.get('bucket')
+                if not filename or not bucket:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Missing filename or bucket'})}
+                try:
+                    url = s3.generate_presigned_url(
+                        ClientMethod='put_object',
+                        Params={
+                            'Bucket': bucket,
+                            'Key': filename,
+                            'ContentType': 'application/octet-stream'
+                        },
+                        ExpiresIn=3600
+                    )
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'url': url})
+                    }
+                except Exception as e:
+                    return {'statusCode': 500, 'headers': headers, 'body': json.dumps({'error': str(e)})}
             
             if action == 'upload':
                 filename = body.get('filename')
@@ -784,11 +854,28 @@ def lambda_handler(event, context):
                 except Exception as e:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Could not find database state. Have you uploaded a dataset yet?'})}
                 
+                # Smart Data Router: Find the CSV that actually contains the target column
+                filename = None
                 try:
-                    file_response = s3.get_object(Bucket=bucket, Key="agent_filename.txt")
-                    filename = file_response['Body'].read().decode('utf-8').strip()
-                except:
-                    filename = "train.csv"
+                    import pandas as pd
+                    import io
+                    objs = s3.list_objects_v2(Bucket=bucket)
+                    for o in objs.get('Contents', []):
+                        if o['Key'].endswith('.csv'):
+                            try:
+                                obj = s3.get_object(Bucket=bucket, Key=o['Key'], Range='bytes=0-4096')
+                                df_head = pd.read_csv(io.BytesIO(obj['Body'].read()), nrows=0)
+                                if target in df_head.columns:
+                                    filename = o['Key']
+                                    print(f">>> Smart Router: Selected {filename} for target {target}")
+                                    break
+                            except:
+                                pass
+                except Exception as e:
+                    print(f"Smart Router failed: {e}")
+                    
+                if not filename:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': f"Target column '{target}' not found in any uploaded CSV files."})}
                     
                 response = handle_automl_train(target, db_url, bucket, filename)
                 return {

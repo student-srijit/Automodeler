@@ -3,331 +3,453 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Automodeler Data Agent</title>
-        <link rel="stylesheet" href="style.css">
+    <title>AutoModeler &mdash; IDE</title>
+    <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
 
-    <div class="sidebar">
-        <h2>Connection Settings</h2>
-        <div class="input-group">
-            <label for="apiUrl">Lambda API Gateway URL</label>
-            <input type="text" id="apiUrl" placeholder="https://....execute-api.region.amazonaws.com/prod">
-        </div>
-        
-        <div class="section-divider"></div>
-        
-        <h2>Upload Dataset (S3)</h2>
-        <div class="input-group">
-            <label for="s3Bucket">AWS S3 Bucket Name</label>
-            <input type="text" id="s3Bucket" placeholder="my-hackathon-bucket">
-        </div>
-        <div class="input-group">
-            <input type="file" id="csvFile" accept=".csv">
-        </div>
-        <button class="btn" id="uploadBtn" onclick="uploadFile()">Upload & Analyze</button>
-        <div id="uploadStatus" style="font-size: 0.8rem; color: var(--success); margin-top: 5px; display: none;"></div>
-
-        <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 10px;">
-            <strong>Note:</strong> Uploading will autonomously provision a CockroachDB Serverless cluster in the background.
-        </p>
-
-        <div class="section-divider"></div>
-
-        <h2>AutoML Lab 🧪</h2>
-        <div class="input-group">
-            <label for="targetColumn">Target Column to Predict</label>
-            <input type="text" id="targetColumn" placeholder="e.g. Price, Category">
-        </div>
-        <button class="btn" id="trainBtn" onclick="trainModel()" style="background-color: #8b5cf6;">Train AI Model</button>
-        <div id="trainStatus" style="font-size: 0.8rem; color: #8b5cf6; margin-top: 5px; display: none;">Training model...</div>
-    </div>
-
-    <div class="main-chat">
-        <div class="chat-header">
-            <h1>Automodeler Agent</h1>
-        </div>
-        
-        <div class="chat-history" id="chatHistory">
-            <div class="message bot">
-                Hello! I am your Autonomous Data Agent. My memory is powered by CockroachDB Vector Search. What would you like to know about your data?
+<!-- ========================= SIDEBAR ========================= -->
+<aside class="sidebar">
+    <div class="sidebar-inner">
+        <!-- Brand -->
+        <div class="brand">
+            <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            <div class="brand-text">
+                <h1>AutoModeler</h1>
+                <span>Orchestrator v2.0</span>
             </div>
         </div>
-        
-        <div class="loading" id="loadingIndicator">
-            Thinking & searching database...
+
+        <!-- Connection -->
+        <div class="section">
+            <div class="section-label">Environment</div>
+            <div class="field">
+                <label>API Gateway</label>
+                <input type="url" id="apiUrl" placeholder="http://localhost:8000/api" autocomplete="off">
+            </div>
+            <div class="field">
+                <label>S3 Bucket</label>
+                <input type="text" id="s3Bucket" placeholder="s3-bucket-name" autocomplete="off">
+            </div>
+        </div>
+
+        <!-- Upload -->
+        <div class="section" style="margin-top: 10px;">
+            <div class="section-label">Workspace</div>
+
+            <div class="drop-zone" id="dropZone">
+                <input type="file" id="fileInput" multiple accept=".csv,.tsv,.zip,.wav,.mp3,.jpg,.jpeg,.png,.m4a">
+                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                <p>Drop files or click</p>
+                <small>CSV, ZIP, Audio, Images</small>
+            </div>
+
+            <div class="file-list" id="fileList"></div>
+
+            <button class="btn btn-primary" id="uploadBtn" onclick="uploadAllFiles()" disabled>
+                <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                Deploy to S3
+            </button>
+        </div>
+
+        <!-- AutoML Lab -->
+        <div class="section" style="margin-top: 10px;">
+            <div class="section-label">AutoML Pipeline</div>
+            <button class="btn" id="trainBtn" onclick="openColumnPicker()" disabled>
+                <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Run AI Pipeline
+            </button>
+        </div>
+    </div>
+</aside>
+
+<!-- ========================= MAIN ========================= -->
+<main class="main">
+    <!-- Header -->
+    <div class="main-header">
+        <div class="header-title">
+            <svg viewBox="0 0 24 24"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+            Terminal &amp; Agent Output
+        </div>
+        <div class="header-status active" id="headerStatus">Idle</div>
+    </div>
+
+    <!-- Activity Feed -->
+    <div class="activity-feed" id="activityFeed"></div>
+
+    <!-- Chat -->
+    <div class="chat-body">
+        <div class="chat-history" id="chatHistory">
+            <div class="welcome-state" id="welcomeState">
+                <svg viewBox="0 0 24 24" style="width:64px;height:64px;stroke-width:1;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                <h2>AutoModeler Workspace</h2>
+                <p>Upload a dataset to automatically provision a serverless cluster. The agent will orchestrate code generation and model training locally or via AWS Lambda.</p>
+            </div>
         </div>
 
         <div class="chat-input-container">
-            <input type="text" id="queryInput" placeholder="Ask a question about your uploaded dataset..." autocomplete="off">
-            <button id="sendBtn">Send</button>
+            <div class="chat-input-wrap">
+                <textarea id="queryInput" placeholder="Ask Copilot about your data..." rows="1"></textarea>
+                <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Send">
+                    <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                </button>
+            </div>
         </div>
     </div>
+</main>
 
-    <script>
-        const queryInput = document.getElementById('queryInput');
-        const sendBtn = document.getElementById('sendBtn');
-        const chatHistory = document.getElementById('chatHistory');
-        const loadingIndicator = document.getElementById('loadingIndicator');
+<!-- ========================= COMMAND PALETTE MODAL ========================= -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModalOnBackdrop(event)">
+    <div class="modal-sheet" id="modalSheet">
+        <div class="modal-header">
+            <input type="text" id="customColumnInput" placeholder="Type target column to predict...">
+        </div>
+        <div class="modal-body" id="columnChips">
+            <!-- Populated dynamically -->
+        </div>
+        <div class="modal-actions">
+            <button class="btn" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="startTraining()">Execute Pipeline</button>
+        </div>
+    </div>
+</div>
 
+<!-- ========================= TOAST ========================= -->
+<div class="toast-container" id="toastContainer"></div>
 
-        // Load from localStorage
-        if (localStorage.getItem('apiUrl')) {
-            document.getElementById('apiUrl').value = localStorage.getItem('apiUrl');
-        }
-        if (localStorage.getItem('s3Bucket')) {
-            document.getElementById('s3Bucket').value = localStorage.getItem('s3Bucket');
-        }
+<script>
+// ==========================================
+//  STATE
+// ==========================================
+let uploadedFiles = [];
+let uploadedDatasets = [];
+let selectedColumn = null;
+let isThinking = false;
+let thinkingMsgEl = null;
 
-        // Allow pressing Enter to send
-        queryInput.addEventListener('keypress', function (e) {
-            if (e.key === 'Enter') {
-                sendMessage();
-            }
-        });
-        sendBtn.addEventListener('click', sendMessage);
+const queryInput  = document.getElementById('queryInput');
+const chatHistory = document.getElementById('chatHistory');
+const activityFeed = document.getElementById('activityFeed');
+const welcomeState = document.getElementById('welcomeState');
 
-        function toggleContext(id) {
-            const el = document.getElementById(id);
-            el.style.display = (el.style.display === 'none' || el.style.display === '') ? 'block' : 'none';
-        }
+['apiUrl','s3Bucket'].forEach(k => {
+    if (localStorage.getItem(k)) document.getElementById(k).value = localStorage.getItem(k);
+});
 
-        async function uploadFile() {
-            const apiUrl = document.getElementById('apiUrl').value.trim();
-            const bucket = document.getElementById('s3Bucket').value.trim();
-            const fileInput = document.getElementById('csvFile');
-            const statusDiv = document.getElementById('uploadStatus');
+// Auto-resize textarea
+queryInput.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = (this.scrollHeight) + 'px';
+});
 
-            if (!apiUrl || !bucket || fileInput.files.length === 0) {
-                alert("Please provide the API URL, S3 Bucket name, and select a CSV file.");
-                return;
-            }
-            localStorage.setItem('apiUrl', apiUrl);
-            localStorage.setItem('s3Bucket', bucket);
+queryInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { 
+        e.preventDefault(); 
+        sendMessage(); 
+    }
+});
 
+// ==========================================
+//  HELPERS
+// ==========================================
+function getApiUrl()  { return document.getElementById('apiUrl').value.trim(); }
+function getBucket()  { return document.getElementById('s3Bucket').value.trim(); }
+function saveSettings() {
+    localStorage.setItem('apiUrl',    getApiUrl());
+    localStorage.setItem('s3Bucket',  getBucket());
+}
 
-            const file = fileInput.files[0];
-            const reader = new FileReader();
+function toast(msg, type = 'info') {
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    let icon = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
+    if (type === 'success') icon = '<svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
+    if (type === 'error') icon = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+    
+    el.innerHTML = `${icon} <span>${msg}</span>`;
+    document.getElementById('toastContainer').appendChild(el);
+    setTimeout(() => el.remove(), 4000);
+}
 
-            reader.onload = async function(e) {
-                // Get base64 string without the data URL prefix
-                const base64String = e.target.result.split(',')[1];
-                
-                statusDiv.style.display = 'block';
-                statusDiv.style.color = '#94a3b8';
-                statusDiv.textContent = 'Uploading to S3...';
+function setHeaderStatus(txt) { document.getElementById('headerStatus').textContent = txt; }
 
-                try {
-                    const response = await fetch(apiUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            action: 'upload',
-                            filename: file.name,
-                            content: base64String,
-                            bucket: bucket
-                        })
-                    });
+// ==========================================
+//  ACTIVITY FEED
+// ==========================================
+function showFeed() { activityFeed.classList.add('visible'); }
+function hideFeed() { activityFeed.classList.remove('visible'); }
 
-                    const data = await response.json();
-                    
-                    if (response.ok) {
-                        statusDiv.style.color = '#10b981';
-                        statusDiv.textContent = 'Success! Background ETL started. You can monitor Lambda logs for the new database URL.';
-                        appendMessage('bot', `I have received ${file.name}. My DevOps agent is provisioning a cluster and analyzing the schema in the background!`);
-                    } else {
-                        statusDiv.style.color = '#ef4444';
-                        statusDiv.textContent = `Error: ${data.error || 'Upload failed'}`;
-                    }
-                } catch (error) {
-                    statusDiv.style.color = '#ef4444';
-                    statusDiv.textContent = `Network Error: ${error.message}`;
-                }
-            };
+function addStep(tag, label, state = 'active') {
+    showFeed();
+    const el = document.createElement('div');
+    el.className = `activity-step ${state}`;
+    el.innerHTML = `
+        <div class="step-time">[${new Date().toLocaleTimeString('en',{hour12:false})}]</div>
+        <div class="step-msg"><span class="step-tag">${tag}</span> &mdash; ${label}</div>
+    `;
+    activityFeed.appendChild(el);
+    activityFeed.scrollTop = activityFeed.scrollHeight;
+    return el;
+}
+function markStep(el, state, label = null) {
+    el.className = `activity-step ${state}`;
+    if (label) el.querySelector('.step-msg').innerHTML = `<span class="step-tag">${state.toUpperCase()}</span> &mdash; ${label}`;
+}
+
+// ==========================================
+//  FILE SELECTION
+// ==========================================
+const fileInput = document.getElementById('fileInput');
+const dropZone  = document.getElementById('dropZone');
+const fileList  = document.getElementById('fileList');
+
+fileInput.addEventListener('change', () => { addFiles([...fileInput.files]); fileInput.value = ''; });
+dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); addFiles([...e.dataTransfer.files]); });
+
+function getFileIcon(name) {
+    const ext = name.split('.').pop().toLowerCase();
+    if (ext === 'zip') return '<svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="7.5 4.21 12 6.81 16.5 4.21"/><polyline points="7.5 19.79 7.5 14.6 3 12"/><polyline points="21 12 16.5 14.6 16.5 19.79"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
+    if (['wav','mp3','m4a'].includes(ext)) return '<svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+    if (['jpg','jpeg','png'].includes(ext)) return '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+    return '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>';
+}
+
+function addFiles(files) {
+    files.forEach(f => {
+        if (uploadedFiles.find(x => x.name === f.name)) return;
+        uploadedFiles.push(f);
+        const chip = document.createElement('div');
+        chip.className = 'file-chip';
+        chip.id = 'chip-' + f.name.replace(/[^a-zA-Z0-9]/g,'_');
+        chip.innerHTML = `
+            ${getFileIcon(f.name)}
+            <span class="file-chip-name" title="${f.name}">${f.name}</span>
+            <span class="file-chip-size">${(f.size/1024).toFixed(1)} KB</span>
+            <button class="file-chip-remove" onclick="removeFile('${f.name}')"><svg viewBox="0 0 24 24" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        `;
+        fileList.appendChild(chip);
+    });
+    updateUploadBtn();
+}
+
+function removeFile(name) {
+    uploadedFiles = uploadedFiles.filter(f => f.name !== name);
+    document.getElementById('chip-' + name.replace(/[^a-zA-Z0-9]/g,'_'))?.remove();
+    updateUploadBtn();
+}
+
+function updateUploadBtn() {
+    const btn = document.getElementById('uploadBtn');
+    btn.disabled = uploadedFiles.length === 0;
+}
+
+// ==========================================
+//  UPLOAD ALL
+// ==========================================
+async function uploadAllFiles() {
+    const apiUrl = getApiUrl();
+    const bucket = getBucket();
+    if (!apiUrl || !bucket) { toast('Missing API URL or Bucket', 'error'); return; }
+    saveSettings();
+
+    document.getElementById('uploadBtn').disabled = true;
+    setHeaderStatus('Uploading...');
+    hideWelcome();
+
+    for (const file of [...uploadedFiles]) {
+        const step = addStep('UPLOAD', `${file.name} to s3://${bucket}`);
+        try {
+            const resUrl = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'get_upload_url', filename: file.name, bucket }) });
+            const urlData = await resUrl.json();
             
-            // Read as data URL to easily extract base64
-            reader.readAsDataURL(file);
-        }
-
-        async function sendMessage() {
-            const query = queryInput.value.trim();
-            const apiUrl = document.getElementById('apiUrl').value.trim();
-            const bucket = document.getElementById('s3Bucket').value.trim();
-
-            if (!query) return;
-            if (!apiUrl || !bucket) {
-                alert("Please enter your Lambda API Gateway URL and S3 Bucket Name in the sidebar.");
-                return;
-            }
-            localStorage.setItem('apiUrl', apiUrl);
-            localStorage.setItem('s3Bucket', bucket);
-
-
-            appendMessage('user', query);
-            queryInput.value = '';
-            loadingIndicator.style.display = 'block';
-
-            try {
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'chat',
-                        query: query,
-                        bucket: bucket
-                    })
-                });
-
-                const data = await response.json();
-                
-                if (response.ok) {
-                    appendMessage('bot', data.answer, data.context_used, data.metrics);
-                } else {
-                    appendMessage('bot', `Error: ${data.error || 'Something went wrong.'}`);
-                }
-            } catch (error) {
-                appendMessage('bot', `Failed to connect to API: ${error.message}`);
-            } finally {
-                loadingIndicator.style.display = 'none';
-            }
-        }
-
-        function appendMessage(sender, text, context = null, metrics = null) {
-            const msgDiv = document.createElement('div');
-            msgDiv.className = `message ${sender}`;
-            
-            if (sender === 'bot') {
-                msgDiv.innerHTML = marked.parse(text);
-            } else {
-                msgDiv.textContent = text;
-            }
-            
-            if (sender === 'bot') {
-                // Add Metrics Badge
-                if (metrics) {
-                    const metricsDiv = document.createElement('div');
-                    metricsDiv.className = 'metrics-badge';
-                    
-                    const speedEl = document.createElement('div');
-                    speedEl.innerHTML = `<strong> Speed:</strong> ${metrics.latency_ms} ms (Search + Generation)`;
-                    
-                    const idxEl = document.createElement('div');
-                    const idxList = metrics.active_indexes ? metrics.active_indexes.join(', ') : 'None detected';
-                    idxEl.innerHTML = `<strong> Active CockroachDB Indexes:</strong> ${idxList}`;
-                    
-                    metricsDiv.appendChild(speedEl);
-                    metricsDiv.appendChild(idxEl);
-                    msgDiv.appendChild(metricsDiv);
-                }
-
-                // Add Context Toggle
-                if (context && context.length > 0) {
-                    const contextId = 'ctx-' + Date.now();
-                    
-                    const toggleBtn = document.createElement('div');
-                    toggleBtn.className = 'context-toggle';
-                    toggleBtn.textContent = 'View retrieved database rows';
-                    toggleBtn.onclick = () => toggleContext(contextId);
-                    
-                    const contextData = document.createElement('div');
-                    contextData.className = 'context-data';
-                    contextData.id = contextId;
-                    contextData.textContent = JSON.stringify(context, null, 2);
-                    
-                    msgDiv.appendChild(document.createElement('br'));
-                    msgDiv.appendChild(toggleBtn);
-                    msgDiv.appendChild(contextData);
-                }
+            if (urlData.error) {
+                markStep(step, 'error', `Failed URL: ${urlData.error}`);
+                continue;
             }
             
-            chatHistory.appendChild(msgDiv);
-            chatHistory.scrollTop = chatHistory.scrollHeight;
-        }
-
-        async function trainModel() {
-            const apiUrl = document.getElementById('apiUrl').value.trim();
-            const bucket = document.getElementById('s3Bucket').value.trim();
-            const targetColumn = document.getElementById('targetColumn').value.trim();
-            const statusDiv = document.getElementById('trainStatus');
-
-            if (!apiUrl || !bucket || !targetColumn) {
-                alert("Please provide the API URL, S3 Bucket name, and a Target Column.");
-                return;
-            }
-
-            localStorage.setItem('apiUrl', apiUrl);
-            localStorage.setItem('s3Bucket', bucket);
-
-            statusDiv.style.display = 'block';
-            statusDiv.innerText = "Initializing AutoML Agent...";
+            // Upload directly to S3 using PUT
+            const res = await fetch(urlData.url, {
+                method: 'PUT',
+                body: file,
+                headers: { 'Content-Type': 'application/octet-stream' }
+            });
             
-            // Add thinking message to chat
-            const thinkingHtml = `
-                <div class="message bot automl-thinking">
-                    <div style="color: #8b5cf6; font-weight: bold; margin-bottom: 5px;">🤖 AutoML Agent Started</div>
-                    Analyzing data profile and writing scikit-learn code to predict <strong>${targetColumn}</strong>...
+            if (res.ok) {
+                markStep(step, 'done', `${file.name} deployed.`);
+                uploadedDatasets.push({ filename: file.name, bucket });
+                removeFile(file.name);
+                toast('Upload successful! The AI Agent is now embedding your dataset in the background. This takes ~3 minutes. Please wait before asking questions!', 'success');
+            } else markStep(step, 'error', `Failed: ${file.name}`);
+        } catch (err) { markStep(step, 'error', err.message); }
+    }
+    updateUploadBtn();
+    setHeaderStatus('Ready');
+    if (uploadedDatasets.length > 0) document.getElementById('trainBtn').disabled = false;
+    setTimeout(hideFeed, 4000);
+}
+
+// ==========================================
+//  COLUMN PICKER
+// ==========================================
+async function openColumnPicker() {
+    const apiUrl = getApiUrl();
+    const bucket = getBucket();
+    let columns = [];
+    const csv = uploadedDatasets.find(d => /\.(csv|tsv)$/i.test(d.filename));
+    
+    if (csv && apiUrl) {
+        try {
+            const res = await fetch(apiUrl, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({action:'columns', filename:csv.filename, bucket}) });
+            const data = await res.json();
+            columns = data.columns || [];
+        } catch(e){}
+    }
+
+    const chips = document.getElementById('columnChips');
+    chips.innerHTML = '';
+    
+    columns.forEach(col => {
+        const opt = document.createElement('div');
+        opt.className = 'column-option';
+        opt.innerHTML = `<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg> ${col}`;
+        opt.onclick = () => {
+            document.querySelectorAll('.column-option').forEach(c=>c.classList.remove('selected'));
+            opt.classList.add('selected');
+            document.getElementById('customColumnInput').value = col;
+        };
+        chips.appendChild(opt);
+    });
+    
+    document.getElementById('customColumnInput').value = '';
+    document.getElementById('modalOverlay').classList.add('visible');
+    document.getElementById('customColumnInput').focus();
+}
+
+function closeModal() { document.getElementById('modalOverlay').classList.remove('visible'); }
+function closeModalOnBackdrop(e) { if(e.target === document.getElementById('modalOverlay')) closeModal(); }
+
+// ==========================================
+//  TRAINING
+// ==========================================
+async function startTraining() {
+    const col = document.getElementById('customColumnInput').value.trim();
+    if (!col) return;
+    closeModal();
+    saveSettings();
+    setHeaderStatus('Building Pipeline...');
+    
+    const s1 = addStep('INIT', `AutoML Pipeline started for target: ${col}`);
+    const s2 = addStep('EXEC', 'Generating and running code...');
+    
+    try {
+        const res = await fetch(getApiUrl(), { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ action: 'train', bucket: getBucket(), target: col }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || data.message || `HTTP Error ${res.status}`);
+        if (data.error) throw new Error(data.error);
+        if (data.message && !data.status) throw new Error(data.message); // Catch API gateway timeouts
+        
+        markStep(s2, 'done', `Pipeline complete (Metric: ${data.final_metric})`);
+        
+        // Terminal Card
+        const msg = document.createElement('div');
+        msg.className = 'message bot';
+        msg.innerHTML = `
+            <div class="message-avatar"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div>
+            <div class="message-content" style="width:100%">
+                <div class="terminal-card">
+                    <div class="terminal-card-header">
+                        <span>auto-modeler/pipeline.py</span>
+                        <span>${data.metrics?.latency_ms}ms</span>
+                    </div>
+                    <div class="terminal-card-body">
+                        <div style="color:#3fb950">&gt; Python Code Generated & Executed</div>
+                        <pre><code>${escHtml(data.generated_code)}</code></pre>
+                        <div style="color:#8b949e; margin-top:16px;">--- OUTPUT ---</div>
+                        <pre style="border-color:transparent; background:transparent;">${escHtml(data.execution_logs)}</pre>
+                        <div class="terminal-metric">FINAL_METRIC: ${escHtml(String(data.final_metric))}</div>
+                    </div>
                 </div>
-            `;
-            chatHistory.insertAdjacentHTML('beforeend', thinkingHtml);
-            chatHistory.scrollTop = chatHistory.scrollHeight;
+            </div>
+        `;
+        chatHistory.appendChild(msg);
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+    } catch(err) {
+        markStep(s2, 'error', err.message);
+        appendBotMsg(`**Execution Error:**\n\`\`\`text\n${err.message}\n\`\`\``);
+    }
+    setHeaderStatus('Ready');
+}
 
-            try {
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'train',
-                        bucket: bucket,
-                        target: targetColumn
-                    })
-                });
-
-                const data = await response.json();
-                
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-
-                statusDiv.style.display = 'none';
-                
-                // Add terminal message
-                const msgHtml = `
-                    <div class="message bot automl-terminal">
-                        <div class="terminal-header">
-                            <span class="dot red"></span>
-                            <span class="dot yellow"></span>
-                            <span class="dot green"></span>
-                            <span style="margin-left: 10px; color: #94a3b8; font-family: monospace; font-size: 0.8rem;">AutoML Training Logs</span>
-                        </div>
-                        <div class="terminal-body">
-                            <div style="color: #4ade80;">$ Generating model code using Qwen 2.5 Coder 32B...</div>
-                            <pre><code class="language-python">${data.generated_code}</code></pre>
-                            <div style="color: #4ade80; margin-top: 10px;">$ Executing code on CockroachDB data...</div>
-                            <pre style="color: #cbd5e1; background: #0f172a; padding: 10px; border-radius: 4px; margin-top: 5px;">${data.execution_logs || "No logs output."}</pre>
-                            <div style="color: #fbbf24; font-weight: bold; margin-top: 10px; font-size: 1.1rem;">>> ${data.final_metric}</div>
-                        </div>
-                        <div class="metrics-badge" style="background-color: #8b5cf61a; color: #8b5cf6; border: 1px solid #8b5cf633;">
-                            ⏱️ Latency: ${data.metrics.latency_ms}ms
-                        </div>
-                    </div>
-                `;
-                chatHistory.insertAdjacentHTML('beforeend', msgHtml);
-
-            } catch (err) {
-                statusDiv.innerText = "Error: " + err.message;
-                statusDiv.style.color = "var(--error)";
-                
-                const errHtml = `
-                    <div class="message bot error">
-                        AutoML Failed: ${err.message}
-                    </div>
-                `;
-                chatHistory.insertAdjacentHTML('beforeend', errHtml);
-            }
-            chatHistory.scrollTop = chatHistory.scrollHeight;
+// ==========================================
+//  CHAT
+// ==========================================
+async function sendMessage() {
+    const q = queryInput.value.trim();
+    if (!q || isThinking) return;
+    saveSettings();
+    hideWelcome();
+    
+    // User Message
+    const msgEl = document.createElement('div');
+    msgEl.className = 'message user';
+    msgEl.innerHTML = `<div class="message-avatar"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div><div class="message-content">${escHtml(q)}</div>`;
+    chatHistory.appendChild(msgEl);
+    queryInput.value = ''; queryInput.style.height = 'auto';
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+    
+    isThinking = true;
+    setHeaderStatus('Querying Database...');
+    const step = addStep('QUERY', 'Searching vector embeddings...');
+    
+    try {
+        const res = await fetch(getApiUrl(), { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ action: 'chat', query: q, bucket: getBucket() }) });
+        const data = await res.json();
+        markStep(step, 'done', 'Response received');
+        
+        if (data.intent === 'train') {
+            appendBotMsg(`**AutoML Triggered!** I detected you want to predict the \`${data.target}\` column. Booting up the Pipeline...`);
+            document.getElementById('customColumnInput').value = data.target;
+            isThinking = false;
+            setTimeout(startTraining, 500);
+            return;
         }
+        
+        if (res.ok) {
+            appendBotMsg(data.answer, data.context_used);
+        } else {
+            const errText = data.error || data.message || `HTTP ${res.status}`;
+            appendBotMsg(`**API Error:** ${errText}`);
+        }
+    } catch(err) {
+        markStep(step, 'error', err.message);
+        appendBotMsg(`**Network Error:** ${err.message}`);
+    }
+    isThinking = false;
+    setHeaderStatus('Ready');
+}
 
-    </script>
+function appendBotMsg(text, context) {
+    const el = document.createElement('div');
+    el.className = 'message bot';
+    let html = `<div class="message-avatar"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div><div class="message-content">${marked.parse(text)}`;
+    if (context && context.length) {
+        const cid = 'ctx-' + Date.now();
+        html += `<div class="context-toggle" onclick="document.getElementById('${cid}').style.display = document.getElementById('${cid}').style.display === 'block' ? 'none' : 'block'">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;"><polyline points="6 9 12 15 18 9"/></svg> Database Source Rows
+        </div>
+        <div class="context-data" id="${cid}">${escHtml(JSON.stringify(context, null, 2))}</div>`;
+    }
+    html += '</div>';
+    el.innerHTML = html;
+    chatHistory.appendChild(el);
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+}
+
+function hideWelcome() { welcomeState?.remove(); }
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+</script>
 </body>
 </html>
