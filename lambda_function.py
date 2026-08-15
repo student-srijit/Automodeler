@@ -508,11 +508,16 @@ def lambda_handler(event, context):
             'Access-Control-Allow-Headers': 'Content-Type',
             'Access-Control-Allow-Methods': 'OPTIONS,POST,GET'
         }
-        if event.get('httpMethod') == 'OPTIONS':
+        
+        # Support both REST API (v1) and HTTP API (v2) payload formats
+        method = event.get('httpMethod') or event.get('requestContext', {}).get('http', {}).get('method')
+        
+        if method == 'OPTIONS':
             return {'statusCode': 200, 'headers': headers, 'body': ''}
             
         try:
-            body = json.loads(event.get('body', '{}'))
+            raw_body = event.get('body') or '{}'
+            body = json.loads(raw_body)
             action = body.get('action', 'chat')
             
             if action == 'upload':
