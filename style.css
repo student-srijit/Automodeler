@@ -1243,6 +1243,24 @@ svg {
 }
 
 /* ----------------------------------------------------------
+   COPILOT REASONING UI
+   ---------------------------------------------------------- */
+.pulsing-cursor {
+    display: inline-block;
+    width: 8px;
+    height: 14px;
+    background-color: var(--neon-cyan);
+    vertical-align: middle;
+    margin-left: 4px;
+    animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
+/* ----------------------------------------------------------
    MODAL
    ---------------------------------------------------------- */
 .modal-overlay {

@@ -832,7 +832,6 @@ async function startTraining(){
   let pollSeconds = 0;
   const pollInterval = setInterval(async () => {
       pollSeconds += 3;
-      markStep(s2, 'info', `AI is reasoning... (${pollSeconds}s elapsed)`);
       try {
           const pollRes = await fetch(getApiUrl(), {
               method: 'POST',
@@ -843,6 +842,8 @@ async function startTraining(){
           
           if(pollData.status === 'processing') {
               // still processing, wait
+              let msg = pollData.message || "Agent reasoning in progress...";
+              markStep(s2, 'info', `<span style="color:var(--neon-cyan)">[${pollSeconds}s]</span> ${escHtml(msg)} <span class="pulsing-cursor">_</span>`);
               return;
           }
           

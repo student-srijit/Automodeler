@@ -26,6 +26,12 @@ _model = None
 # UTILITY
 # ═══════════════════════════════════════════════════════════════════
 
+def stream_status(job_id, bucket, message):
+    if not job_id or not bucket: return
+    try:
+        s3.put_object(Bucket=bucket, Key=f"jobs/{job_id}_status.json", Body=json.dumps({"status": "processing", "message": message}))
+    except: pass
+
 def get_model():
     global _model
     if _model is None:
@@ -643,7 +649,7 @@ def _parse_metric_value(metric_str):
     return -1.0
 
 
-def _run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time, target_column="target", max_rounds=3):
+def _run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time, target_column="target", max_rounds=3, job_id=None):
     """
     Multi-Agent Reasoning Loop:
     Round 1: DeepSeek-R1 Analyst → LLaMA-3.3 Coder → exec() → Score
@@ -670,6 +676,7 @@ def _run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time,
         
         # ── Agent 1: Analyst (DeepSeek-R1 on Groq — reasoning model for strategy) ──
         print(">>> [Agent 1 — Analyst] deepseek-r1-distill-llama-70b (Groq)")
+        stream_status(job_id, bucket, f"Agent 1 (Strategist): DeepSeek-R1 analyzing dataset for Round {round_num}...")
         try:
             analyst_response = groq_client.chat.completions.create(
                 messages=[{"role": "user", "content": current_analyst_prompt}],
@@ -692,6 +699,7 @@ def _run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time,
         approach_history.append(f"Round {round_num}: {strategy_plan[:150]}...")
         
         # ── Agent 2: Coder (LLaMA-3.3-70B on Groq — best for code gen) ──
+        stream_status(job_id, bucket, f"Agent 2 (Coder): LLaMA-3.3 writing implementation for Round {round_num}...")
         coder_prompt = f"""You are an elite AI Coding Agent. Implement this ML strategy precisely.
 Our Lead Data Scientist's strategy:
 ----------
@@ -716,6 +724,7 @@ Output ONLY raw Python code. No markdown. No ``` blocks. Pure executable Python 
         
         # ── Execute Code ──
         print(">>> [Executor] Running generated code...")
+        stream_status(job_id, bucket, f"Executing generated code for Round {round_num}...")
         old_stdout = sys.stdout
         redirected_output = sys.stdout = io.StringIO()
         exec_error = None
@@ -779,6 +788,7 @@ Output ONLY raw Python code. No markdown. No ``` blocks. Pure executable Python 
         
         # ── Agent 3: Nemotron Reasoner (OpenRouter) ──
         print(f">>> [Agent 3 — Nemotron] Reviewing round {round_num} results...")
+        stream_status(job_id, bucket, f"Agent 3 (Reviewer): Nemotron-253B evaluating Round {round_num} performance...")
         nemotron_review = {"verdict": "improve", "reasoning": "Reasoner unavailable.", "suggestions": "", "new_algorithm": ""}
         try:
             nemotron_review = call_nemotron_reasoner(
@@ -789,6 +799,7 @@ Output ONLY raw Python code. No markdown. No ``` blocks. Pure executable Python 
             print(f">>> [Nemotron] Call failed: {e}. Defaulting to 'improve'.")
         
         verdict = nemotron_review.get("verdict", "improve")
+        stream_status(job_id, bucket, f"Agent 3 Verdict: {verdict.upper()}. Planning next step...")
         suggestions = nemotron_review.get("suggestions", "")
         new_algorithm = nemotron_review.get("new_algorithm", "")
         reasoning = nemotron_review.get("reasoning", "")
@@ -859,11 +870,11 @@ Design a fresh strategy based on the recommended approach above.
 
 
 # Legacy alias — keeps all callers working
-def _run_two_agent_pipeline(analyst_prompt, coder_extra_context, bucket, start_time, target_column="target"):
-    return _run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time, target_column=target_column)
+def _run_two_agent_pipeline(analyst_prompt, coder_extra_context, bucket, start_time, target_column="target", job_id=None):
+    return _run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time, target_column=target_column, job_id=job_id)
 
 
-def handle_image_task(bucket, filename, target_column):
+def handle_image_task(bucket, filename, target_column, job_id=None):
     """2-Agent pipeline for image datasets (.zip of images or folder)."""
     print(f">>> [IMAGE MODALITY] file={filename} target={target_column}")
     start_time = time.time()
@@ -889,12 +900,12 @@ Assume `{filename}` is available locally (already downloaded from S3).
 Use only: zipfile, os, Pillow (PIL), numpy, sklearn, and optionally torch+torchvision (CPU only).
 Save output to `submission.csv`.
 """
-    result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time, target_column=target_column)
+    result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time, target_column=target_column, job_id=job_id)
     result['modality'] = 'image'
     return result
 
 
-def handle_audio_task(bucket, filename, target_column):
+def handle_audio_task(bucket, filename, target_column, job_id=None):
     """2-Agent pipeline for audio datasets (.zip of audio files)."""
     print(f">>> [AUDIO MODALITY] file={filename} target={target_column}")
     start_time = time.time()
@@ -921,12 +932,12 @@ Assume `{filename}` is available locally.
 Use only: zipfile, os, numpy, librosa, soundfile, sklearn.
 Save output to `submission.csv`.
 """
-    result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time, target_column=target_column)
+    result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time, target_column=target_column, job_id=job_id)
     result['modality'] = 'audio'
     return result
 
 
-def handle_automl_train(target_column, db_url, bucket, filename):
+def handle_automl_train(target_column, db_url, bucket, filename, job_id=None):
     print(f">>> Handling AutoML training for target: {target_column}")
     start_time = time.time()
 
@@ -1110,6 +1121,7 @@ def lambda_handler(event, context):
                     body_dict['is_async_job'] = True
                     body_dict['job_id'] = job_id
                     async_payload['body'] = json.dumps(body_dict)
+                    async_payload['isBase64Encoded'] = False # CRITICAL BUGFIX
                     
                     try:
                         lambda_client.invoke(
@@ -1163,7 +1175,7 @@ def lambda_handler(event, context):
                     s3.put_object(Bucket=bucket, Key=f"jobs/{job_id}.json", Body=json.dumps(err_resp))
                     return {'statusCode': 400, 'body': ''}
                     
-                response = handle_automl_train(target, db_url, bucket, filename)
+                response = handle_automl_train(target, db_url, bucket, filename, job_id=job_id)
                 
                 # Save the final result to S3 for the frontend to poll!
                 try:
@@ -1197,10 +1209,18 @@ def lambda_handler(event, context):
                     }
                 except Exception as e:
                     # If file doesn't exist yet, it's still processing!
+                    status_message = "Agent reasoning in progress..."
+                    try:
+                        status_obj = s3.get_object(Bucket=bucket, Key=f"jobs/{job_id}_status.json")
+                        status_data = json.loads(status_obj['Body'].read().decode('utf-8'))
+                        status_message = status_data.get('message', status_message)
+                    except:
+                        pass
+                        
                     return {
                         'statusCode': 200,
                         'headers': headers,
-                        'body': json.dumps({'status': 'processing'})
+                        'body': json.dumps({'status': 'processing', 'message': status_message})
                     }
                 
             # action == 'chat'
