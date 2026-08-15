@@ -496,29 +496,185 @@ def handle_agent_chat(user_query, db_url):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# STAGE 8: AUTO-ML CODING AGENT
+# STAGE 8: AUTO-ML CODING AGENT  (Multi-Modal)
 # ═══════════════════════════════════════════════════════════════════
+
+IMAGE_EXTS  = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp'}
+AUDIO_EXTS  = {'.mp3', '.wav', '.flac', '.ogg', '.m4a', '.aac'}
+TABULAR_EXTS = {'.csv', '.tsv', '.xlsx', '.xls'}
+ZIP_EXT      = '.zip'
+
+def detect_modality(filename):
+    """Return 'image', 'audio', 'tabular', or 'zip_unknown' based on file extension."""
+    import os
+    ext = os.path.splitext(filename.lower())[1]
+    if ext in IMAGE_EXTS:
+        return 'image'
+    if ext in AUDIO_EXTS:
+        return 'audio'
+    if ext == ZIP_EXT:
+        return 'zip'
+    return 'tabular'
+
+
+def _run_two_agent_pipeline(analyst_prompt, coder_extra_context, bucket, start_time):
+    """Shared 2-Agent pipeline: Analyst -> Coder -> exec() -> return result dict."""
+    import io, sys
+    groq_client = Groq(api_key=os.environ['GROQ_API_KEY'])
+
+    # Agent 1: Analyst
+    print(">>> Prompting Lead Analyst (LLaMA 3.3 70B)...")
+    analyst_response = groq_client.chat.completions.create(
+        messages=[{"role": "user", "content": analyst_prompt}],
+        model="llama-3.3-70b-versatile",
+        temperature=0.1
+    )
+    strategy_plan = analyst_response.choices[0].message.content.strip()
+    print(">>> Strategy Developed:\n", strategy_plan)
+
+    # Agent 2: Coder
+    coder_prompt = f"""You are an elite AI Coding Agent.
+Our Lead Data Scientist has provided the following architectural strategy:
+----------
+{strategy_plan}
+----------
+{coder_extra_context}
+Calculate an appropriate metric if possible and print "FINAL_METRIC: <value>", otherwise print "FINAL_METRIC: Ready".
+Output ONLY the raw Python code. Do not use markdown blocks. Just pure code.
+"""
+    print(">>> Prompting Senior Coder (LLaMA 3.3 70B)...")
+    coder_response = groq_client.chat.completions.create(
+        messages=[{"role": "user", "content": coder_prompt}],
+        model="llama-3.3-70b-versatile",
+        temperature=0.1
+    )
+    generated_code = coder_response.choices[0].message.content.strip()
+    generated_code = re.sub(r'^```[a-z]*\n?', '', generated_code, flags=re.MULTILINE)
+    generated_code = re.sub(r'```\s*$', '', generated_code, flags=re.MULTILINE)
+    print(">>> Code Generated:\n", generated_code)
+
+    # Execute
+    print("\n=== GENERATED CODE ===")
+    print(generated_code)
+    old_stdout = sys.stdout
+    redirected_output = sys.stdout = io.StringIO()
+    try:
+        exec(generated_code, {})
+    except Exception as e:
+        sys.stdout = old_stdout
+        return {"error": f"Failed to execute generated code: {e}", "code": generated_code}
+    sys.stdout = old_stdout
+    execution_output = redirected_output.getvalue()
+    print("\n=== EXECUTION LOGS ===")
+    print(execution_output)
+
+    metric_match = re.search(r'FINAL_METRIC:\s*(.+)', execution_output)
+    final_metric = metric_match.group(1) if metric_match else "Metric output not found."
+    latency_ms = int((time.time() - start_time) * 1000)
+    return {
+        "status": "success",
+        "final_metric": final_metric,
+        "generated_code": generated_code,
+        "execution_logs": execution_output,
+        "metrics": {"latency_ms": latency_ms}
+    }
+
+
+def handle_image_task(bucket, filename, target_column):
+    """2-Agent pipeline for image datasets (.zip of images or folder)."""
+    print(f">>> [IMAGE MODALITY] file={filename} target={target_column}")
+    start_time = time.time()
+
+    analyst_prompt = f"""You are an elite AI Lead Data Scientist specializing in Computer Vision.
+The user has uploaded an IMAGE dataset named '{filename}' to an S3 bucket '{bucket}'.
+The target task is: '{target_column}'.
+
+Typical structure: a .zip file containing sub-folders per class (e.g. cats/, dogs/), or a CSV manifest with columns [filename, label].
+
+Develop an optimal Computer Vision ML strategy:
+1. How to load the images from the zip (use zipfile + Pillow).
+2. Feature extraction: use a pre-trained ResNet-50 (torchvision, remove final FC layer) as a feature extractor — no GPU needed.
+3. Normalize features. For classification use SVM or LogisticRegression. For similarity/retrieval use NearestNeighbors.
+4. If test images exist (a test.zip or test folder), generate predictions and save to submission.csv with columns [filename, {target_column}] for classification, or [filename, Index_list] for retrieval.
+5. Print FINAL_METRIC: <accuracy or distance>.
+
+Write a clear step-by-step algorithmic blueprint. Do NOT write Python code yet.
+"""
+
+    coder_context = f"""
+Assume `{filename}` is available locally (already downloaded from S3).
+Use only: zipfile, os, Pillow (PIL), numpy, sklearn, and optionally torch+torchvision (CPU only).
+Save output to `submission.csv`.
+"""
+    result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time)
+    result['modality'] = 'image'
+    return result
+
+
+def handle_audio_task(bucket, filename, target_column):
+    """2-Agent pipeline for audio datasets (.zip of audio files)."""
+    print(f">>> [AUDIO MODALITY] file={filename} target={target_column}")
+    start_time = time.time()
+
+    analyst_prompt = f"""You are an elite AI Lead Data Scientist specializing in Audio ML.
+The user has uploaded an AUDIO dataset named '{filename}' to an S3 bucket '{bucket}'.
+The target task is: '{target_column}'.
+
+Typical structure: a .zip file containing sub-folders per class (e.g. happy/, sad/), each with .wav or .mp3 files.
+
+Develop an optimal Audio ML strategy:
+1. How to unzip and load audio files using librosa.
+2. Feature extraction: extract MFCC features (n_mfcc=40) + chroma + spectral contrast from each file. Average across time axis.
+3. Normalize features with StandardScaler.
+4. For classification: SVM or RandomForest. For retrieval: NearestNeighbors (cosine).
+5. If test audio exists (test.zip or test folder), generate predictions and save to submission.csv with columns [filename, {target_column}].
+6. Print FINAL_METRIC: <accuracy or distance>.
+
+Write a clear step-by-step algorithmic blueprint. Do NOT write Python code yet.
+"""
+
+    coder_context = f"""
+Assume `{filename}` is available locally.
+Use only: zipfile, os, numpy, librosa, soundfile, sklearn.
+Save output to `submission.csv`.
+"""
+    result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time)
+    result['modality'] = 'audio'
+    return result
+
 
 def handle_automl_train(target_column, db_url, bucket, filename):
     print(f">>> Handling AutoML training for target: {target_column}")
     start_time = time.time()
-    
+
     if db_url:
         os.environ["DATABASE_URL"] = db_url
 
+    # ── Modality Router ────────────────────────────────────────────
+    modality = detect_modality(filename)
+    print(f">>> Detected modality: {modality.upper()} for file: {filename}")
+
+    if modality == 'image':
+        result = handle_image_task(bucket, filename, target_column)
+        result['target_column'] = target_column
+        return result
+
+    if modality == 'audio':
+        result = handle_audio_task(bucket, filename, target_column)
+        result['target_column'] = target_column
+        return result
+
+    # ── Tabular / ZIP (default) ─────────────────────────────────────
     import pandas as pd
-    
-    # 1. Get Table Name and Sample Data
+
     sample_data = []
     columns = []
-    
     try:
         try:
             obj = s3.get_object(Bucket=bucket, Key=filename)
             df_sample = pd.read_csv(obj['Body'], nrows=10)
         except:
             df_sample = pd.read_csv(filename, nrows=10)
-            
         columns = df_sample.columns.tolist()
         for _, row in df_sample.iterrows():
             row_dict = row.to_dict()
@@ -534,109 +690,33 @@ def handle_automl_train(target_column, db_url, bucket, filename):
     if target_column not in columns:
         return {"error": f"Target column '{target_column}' not found in dataset. Available columns: {columns}"}
 
-    # 2. Agent 1: The Analyst (LLaMA 3.3 70B)
-    groq_client = Groq(api_key=os.environ['GROQ_API_KEY'])
-    analyst_prompt = f"""You are an elite AI Lead Data Scientist. 
+    analyst_prompt = f"""You are an elite AI Lead Data Scientist.
 Your task is to define the optimal ML mathematical strategy for the target column '{target_column}'.
 
 Here is a sample of the data:
 {json.dumps(sample_data, indent=2)}
 
 REQUIREMENTS FOR YOUR STRATEGY:
-1. The dataset will be `train.csv` and `test.csv`.
-2. We need to find the top 10 most similar reviews in the training dataset for each review in the test dataset.
-3. Suggest the optimal feature extraction (e.g., TfidfVectorizer).
-4. Suggest the optimal model (e.g., sklearn.neighbors.NearestNeighbors) to find the 10 nearest neighbors.
-5. The training set has an `Index` column. The output should map to the training `Index` values, not array indices.
-6. The final output must be saved to `submission.csv` with columns `Index` (from test) and `Index_list` (a python list of 10 `Index` integers from train).
+1. The dataset will be `train.csv` and `test.csv` in the current directory.
+2. We need to find the top 10 most similar rows in the training dataset for each row in the test dataset.
+3. Suggest the optimal feature extraction (e.g., TfidfVectorizer for text, StandardScaler for numeric).
+4. Suggest the optimal model (sklearn.neighbors.NearestNeighbors) to find the 10 nearest neighbors.
+5. The training set has an `Index` column. The output should map to training `Index` values, not array indices.
+6. Save to `submission.csv` with columns `Index` (from test) and `Index_list` (python list of 10 `Index` ints from train).
 
-Write a clear, detailed algorithmic blueprint for our coding agent to implement this exactly. Do not write the python code yourself, just the step-by-step mathematical strategy.
+Write a clear, detailed algorithmic blueprint. Do NOT write Python code yet.
 """
-    
-    print(">>> Prompting Lead Analyst (LLaMA 3.3 70B)...")
-    analyst_response = groq_client.chat.completions.create(
-        messages=[{"role": "user", "content": analyst_prompt}],
-        model="llama-3.3-70b-versatile",
-        temperature=0.1
-    )
-    strategy_plan = analyst_response.choices[0].message.content.strip()
-    print(">>> Strategy Developed:\n", strategy_plan)
 
-    # 3. Agent 2: The Coder (LLaMA 3.3 70B)
-    coder_prompt = f"""You are an elite AI Coding Agent. 
-Our Lead Data Scientist has provided the following architectural strategy:
-----------
-{strategy_plan}
-----------
-
-Write a standalone Python script using scikit-learn that implements this EXACT strategy.
+    coder_context = f"""
+Write a standalone Python script using scikit-learn that implements this strategy.
 Assume `train.csv` and `test.csv` are in the current directory.
-Here is a sample of the data to show you the exact column names:
+Column reference (first 10 rows sample):
 {json.dumps(sample_data, indent=2)}
-Calculate an appropriate metric if possible (like average distance) and print "FINAL_METRIC: <value>", otherwise print "FINAL_METRIC: Ready".
-Output ONLY the raw Python code. Do not use markdown blocks. Just pure code.
 """
-    
-    print(">>> Prompting Senior Coder (LLaMA 3.3 70B)...")
-    coder_response = groq_client.chat.completions.create(
-        messages=[{"role": "user", "content": coder_prompt}],
-        model="llama-3.3-70b-versatile",
-        temperature=0.1
-    )
-    
-    generated_code = coder_response.choices[0].message.content.strip()
-    generated_code = re.sub(r'^```[a-z]*\n?', '', generated_code, flags=re.MULTILINE)
-    generated_code = re.sub(r'```\s*$', '', generated_code, flags=re.MULTILINE)
-    
-    print(">>> Code Generated:\n", generated_code)
-    
-    # 3. Securely Execute the Code (Sandbox)
-    import io
-    import sys
-    import pandas as pd
-    
-    try:
-        obj = s3.get_object(Bucket=bucket, Key=filename)
-        df = pd.read_csv(obj['Body'])
-    except Exception as e:
-        print(f"Failed to load CSV from S3, trying local: {e}")
-        try:
-            df = pd.read_csv(filename)
-        except Exception as e2:
-            return {"error": f"Failed to load dataset {filename}: {e2}"}
-
-    old_stdout = sys.stdout
-    redirected_output = sys.stdout = io.StringIO()
-    
-    try:
-        exec_globals = {'df': df, 'pd': pd}
-        exec(generated_code, exec_globals)
-    except Exception as e:
-        print(f"Execution Error: {e}")
-        sys.stdout = old_stdout
-        return {
-            "error": f"Failed to execute generated code: {e}",
-            "code": generated_code
-        }
-    
-    sys.stdout = old_stdout
-    execution_output = redirected_output.getvalue()
-    
-    metric_match = re.search(r'FINAL_METRIC:\s*(.+)', execution_output)
-    final_metric = metric_match.group(1) if metric_match else "Metric output not found."
-    
-    latency_ms = int((time.time() - start_time) * 1000)
-    
-    return {
-        "status": "success",
-        "target_column": target_column,
-        "final_metric": final_metric,
-        "generated_code": generated_code,
-        "execution_logs": execution_output,
-        "metrics": {
-            "latency_ms": latency_ms
-        }
-    }
+    result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time)
+    result['target_column'] = target_column
+    result['modality'] = 'tabular'
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -673,13 +753,18 @@ def lambda_handler(event, context):
                 if not filename or not content_b64 or not bucket:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Missing filename, content, or bucket for upload'})}
                 
-                csv_bytes = base64.b64decode(content_b64)
-                s3.put_object(Bucket=bucket, Key=filename, Body=csv_bytes)
-                
+                file_bytes = base64.b64decode(content_b64)
+                s3.put_object(Bucket=bucket, Key=filename, Body=file_bytes)
+
+                modality = detect_modality(filename)
                 return {
                     'statusCode': 200,
                     'headers': headers,
-                    'body': json.dumps({'status': 'success', 'message': f'Uploaded {filename} to {bucket}. Background ETL agent triggered.'})
+                    'body': json.dumps({
+                        'status': 'success',
+                        'message': f'Uploaded {filename} to {bucket}.',
+                        'detected_modality': modality
+                    })
                 }
                 
             if action == 'train':

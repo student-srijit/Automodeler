@@ -8,3 +8,6 @@ boto3
 python-dotenv
 
 openai
+librosa
+soundfile
+Pillow
