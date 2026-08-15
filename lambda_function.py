@@ -1,6 +1,12 @@
 import json
 import urllib.parse
 import os
+
+# AWS Lambda filesystem is strictly read-only except for /tmp.
+# We must redirect all cache and config files to /tmp to prevent Errno 30 crashes.
+os.environ['HOME'] = '/tmp'
+os.environ['HF_HOME'] = '/tmp/huggingface'
+
 import csv
 import re
 import hashlib
