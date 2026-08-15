@@ -297,6 +297,7 @@ def transform_rows(headers, rows, profile_columns, duplicate_indices):
 # ═══════════════════════════════════════════════════════════════════
 
 def embed_and_insert(schema, headers, transformed_rows, batch_size=500):
+    transformed_rows = transformed_rows[:500]  # Cap for RAG demo speed
     model         = get_model()
     conn          = get_db_conn()
     primary_table = schema["tables"][0]["table_name"]
@@ -495,6 +496,150 @@ def handle_agent_chat(user_query, db_url):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# STAGE 8: AUTO-ML CODING AGENT
+# ═══════════════════════════════════════════════════════════════════
+
+def handle_automl_train(target_column, db_url, bucket, filename):
+    print(f">>> Handling AutoML training for target: {target_column}")
+    start_time = time.time()
+    
+    if db_url:
+        os.environ["DATABASE_URL"] = db_url
+
+    import pandas as pd
+    
+    # 1. Get Table Name and Sample Data
+    sample_data = []
+    columns = []
+    
+    try:
+        try:
+            obj = s3.get_object(Bucket=bucket, Key=filename)
+            df_sample = pd.read_csv(obj['Body'], nrows=10)
+        except:
+            df_sample = pd.read_csv(filename, nrows=10)
+            
+        columns = df_sample.columns.tolist()
+        for _, row in df_sample.iterrows():
+            row_dict = row.to_dict()
+            for k, v in row_dict.items():
+                if pd.isna(v):
+                    row_dict[k] = None
+                elif type(v).__name__ in ['datetime', 'date', 'Timestamp']:
+                    row_dict[k] = str(v)
+            sample_data.append(row_dict)
+    except Exception as e:
+        return {"error": f"Failed to load sample data from {filename}: {e}"}
+
+    if target_column not in columns:
+        return {"error": f"Target column '{target_column}' not found in dataset. Available columns: {columns}"}
+
+    # 2. Agent 1: The Analyst (LLaMA 3.3 70B)
+    groq_client = Groq(api_key=os.environ['GROQ_API_KEY'])
+    analyst_prompt = f"""You are an elite AI Lead Data Scientist. 
+Your task is to define the optimal ML mathematical strategy for the target column '{target_column}'.
+
+Here is a sample of the data:
+{json.dumps(sample_data, indent=2)}
+
+REQUIREMENTS FOR YOUR STRATEGY:
+1. The dataset will be `train.csv` and `test.csv`.
+2. We need to find the top 10 most similar reviews in the training dataset for each review in the test dataset.
+3. Suggest the optimal feature extraction (e.g., TfidfVectorizer).
+4. Suggest the optimal model (e.g., sklearn.neighbors.NearestNeighbors) to find the 10 nearest neighbors.
+5. The training set has an `Index` column. The output should map to the training `Index` values, not array indices.
+6. The final output must be saved to `submission.csv` with columns `Index` (from test) and `Index_list` (a python list of 10 `Index` integers from train).
+
+Write a clear, detailed algorithmic blueprint for our coding agent to implement this exactly. Do not write the python code yourself, just the step-by-step mathematical strategy.
+"""
+    
+    print(">>> Prompting Lead Analyst (LLaMA 3.3 70B)...")
+    analyst_response = groq_client.chat.completions.create(
+        messages=[{"role": "user", "content": analyst_prompt}],
+        model="llama-3.3-70b-versatile",
+        temperature=0.1
+    )
+    strategy_plan = analyst_response.choices[0].message.content.strip()
+    print(">>> Strategy Developed:\n", strategy_plan)
+
+    # 3. Agent 2: The Coder (LLaMA 3.3 70B)
+    coder_prompt = f"""You are an elite AI Coding Agent. 
+Our Lead Data Scientist has provided the following architectural strategy:
+----------
+{strategy_plan}
+----------
+
+Write a standalone Python script using scikit-learn that implements this EXACT strategy.
+Assume `train.csv` and `test.csv` are in the current directory.
+Here is a sample of the data to show you the exact column names:
+{json.dumps(sample_data, indent=2)}
+Calculate an appropriate metric if possible (like average distance) and print "FINAL_METRIC: <value>", otherwise print "FINAL_METRIC: Ready".
+Output ONLY the raw Python code. Do not use markdown blocks. Just pure code.
+"""
+    
+    print(">>> Prompting Senior Coder (LLaMA 3.3 70B)...")
+    coder_response = groq_client.chat.completions.create(
+        messages=[{"role": "user", "content": coder_prompt}],
+        model="llama-3.3-70b-versatile",
+        temperature=0.1
+    )
+    
+    generated_code = coder_response.choices[0].message.content.strip()
+    generated_code = re.sub(r'^```[a-z]*\n?', '', generated_code, flags=re.MULTILINE)
+    generated_code = re.sub(r'```\s*$', '', generated_code, flags=re.MULTILINE)
+    
+    print(">>> Code Generated:\n", generated_code)
+    
+    # 3. Securely Execute the Code (Sandbox)
+    import io
+    import sys
+    import pandas as pd
+    
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=filename)
+        df = pd.read_csv(obj['Body'])
+    except Exception as e:
+        print(f"Failed to load CSV from S3, trying local: {e}")
+        try:
+            df = pd.read_csv(filename)
+        except Exception as e2:
+            return {"error": f"Failed to load dataset {filename}: {e2}"}
+
+    old_stdout = sys.stdout
+    redirected_output = sys.stdout = io.StringIO()
+    
+    try:
+        exec_globals = {'df': df, 'pd': pd}
+        exec(generated_code, exec_globals)
+    except Exception as e:
+        print(f"Execution Error: {e}")
+        sys.stdout = old_stdout
+        return {
+            "error": f"Failed to execute generated code: {e}",
+            "code": generated_code
+        }
+    
+    sys.stdout = old_stdout
+    execution_output = redirected_output.getvalue()
+    
+    metric_match = re.search(r'FINAL_METRIC:\s*(.+)', execution_output)
+    final_metric = metric_match.group(1) if metric_match else "Metric output not found."
+    
+    latency_ms = int((time.time() - start_time) * 1000)
+    
+    return {
+        "status": "success",
+        "target_column": target_column,
+        "final_metric": final_metric,
+        "generated_code": generated_code,
+        "execution_logs": execution_output,
+        "metrics": {
+            "latency_ms": latency_ms
+        }
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
 # MAIN HANDLER
 # ═══════════════════════════════════════════════════════════════════
 
@@ -535,6 +680,30 @@ def lambda_handler(event, context):
                     'statusCode': 200,
                     'headers': headers,
                     'body': json.dumps({'status': 'success', 'message': f'Uploaded {filename} to {bucket}. Background ETL agent triggered.'})
+                }
+                
+            if action == 'train':
+                target = body.get('target', '')
+                bucket = body.get('bucket', '')
+                if not target or not bucket:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Missing target column or bucket'})}
+                try:
+                    state_response = s3.get_object(Bucket=bucket, Key="agent_memory_state.txt")
+                    db_url = state_response['Body'].read().decode('utf-8').strip()
+                except Exception as e:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Could not find database state. Have you uploaded a dataset yet?'})}
+                
+                try:
+                    file_response = s3.get_object(Bucket=bucket, Key="agent_filename.txt")
+                    filename = file_response['Body'].read().decode('utf-8').strip()
+                except:
+                    filename = "train.csv"
+                    
+                response = handle_automl_train(target, db_url, bucket, filename)
+                return {
+                    'statusCode': 200 if 'error' not in response else 400,
+                    'headers': headers,
+                    'body': json.dumps(response)
                 }
                 
             # action == 'chat'
@@ -583,6 +752,7 @@ def lambda_handler(event, context):
             
             print(f">>> Saving agent memory state to s3://{bucket}/agent_memory_state.txt")
             s3.put_object(Bucket=bucket, Key="agent_memory_state.txt", Body=new_db_url.encode('utf-8'))
+            s3.put_object(Bucket=bucket, Key="agent_filename.txt", Body=key.encode('utf-8'))
             
             print(">>> STAGE 1: Advanced Data Profiling...")
             profile, headers, rows, dupe_idx = profile_csv(bucket, key)

@@ -7,7 +7,7 @@ import lambda_function
 
 # Simulate the S3 trigger event
 bucket_name = "automodeler-uploads-rimo-1234"
-file_key = "large_sample.csv"
+file_key = "train.csv"
 
 event = {
     'Records': [{
@@ -18,7 +18,7 @@ event = {
     }]
 }
 
-print(f"\n🚀 Manually Triggering ETL Pipeline for s3://{bucket_name}/{file_key}...")
+print(f"\n Manually Triggering ETL Pipeline for s3://{bucket_name}/{file_key}...")
 print("Please wait while the AI generates the schema and calculates the embeddings...\n")
 
 try:

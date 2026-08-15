@@ -275,3 +275,49 @@ body {
     50% { opacity: 1; }
     100% { opacity: 0.6; }
 }
+
+/* AutoML Lab Styles */
+.automl-thinking {
+    background: rgba(139, 92, 246, 0.05) !important;
+    border: 1px solid rgba(139, 92, 246, 0.2) !important;
+    animation: pulse 1.5s infinite;
+}
+
+.automl-terminal {
+    background: #1e293b !important;
+    border: 1px solid #334155 !important;
+    font-family: monospace;
+    padding: 0 !important;
+    overflow: hidden;
+}
+
+.terminal-header {
+    background: #0f172a;
+    padding: 10px 15px;
+    border-bottom: 1px solid #334155;
+    display: flex;
+    align-items: center;
+}
+
+.terminal-body {
+    padding: 15px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 6px;
+}
+.dot.red { background-color: #ef4444; }
+.dot.yellow { background-color: #f59e0b; }
+.dot.green { background-color: #10b981; }
+
+.terminal-body pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+}

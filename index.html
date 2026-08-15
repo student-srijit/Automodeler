@@ -29,9 +29,19 @@
         <button class="btn" id="uploadBtn" onclick="uploadFile()">Upload & Analyze</button>
         <div id="uploadStatus" style="font-size: 0.8rem; color: var(--success); margin-top: 5px; display: none;"></div>
 
-        <p style="font-size: 0.8rem; color: #94a3b8; margin-top: auto;">
+        <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 10px;">
             <strong>Note:</strong> Uploading will autonomously provision a CockroachDB Serverless cluster in the background.
         </p>
+
+        <div class="section-divider"></div>
+
+        <h2>AutoML Lab 🧪</h2>
+        <div class="input-group">
+            <label for="targetColumn">Target Column to Predict</label>
+            <input type="text" id="targetColumn" placeholder="e.g. Price, Category">
+        </div>
+        <button class="btn" id="trainBtn" onclick="trainModel()" style="background-color: #8b5cf6;">Train AI Model</button>
+        <div id="trainStatus" style="font-size: 0.8rem; color: #8b5cf6; margin-top: 5px; display: none;">Training model...</div>
     </div>
 
     <div class="main-chat">
@@ -234,6 +244,90 @@
             chatHistory.appendChild(msgDiv);
             chatHistory.scrollTop = chatHistory.scrollHeight;
         }
+
+        async function trainModel() {
+            const apiUrl = document.getElementById('apiUrl').value.trim();
+            const bucket = document.getElementById('s3Bucket').value.trim();
+            const targetColumn = document.getElementById('targetColumn').value.trim();
+            const statusDiv = document.getElementById('trainStatus');
+
+            if (!apiUrl || !bucket || !targetColumn) {
+                alert("Please provide the API URL, S3 Bucket name, and a Target Column.");
+                return;
+            }
+
+            localStorage.setItem('apiUrl', apiUrl);
+            localStorage.setItem('s3Bucket', bucket);
+
+            statusDiv.style.display = 'block';
+            statusDiv.innerText = "Initializing AutoML Agent...";
+            
+            // Add thinking message to chat
+            const thinkingHtml = `
+                <div class="message bot automl-thinking">
+                    <div style="color: #8b5cf6; font-weight: bold; margin-bottom: 5px;">🤖 AutoML Agent Started</div>
+                    Analyzing data profile and writing scikit-learn code to predict <strong>${targetColumn}</strong>...
+                </div>
+            `;
+            chatHistory.insertAdjacentHTML('beforeend', thinkingHtml);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'train',
+                        bucket: bucket,
+                        target: targetColumn
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                statusDiv.style.display = 'none';
+                
+                // Add terminal message
+                const msgHtml = `
+                    <div class="message bot automl-terminal">
+                        <div class="terminal-header">
+                            <span class="dot red"></span>
+                            <span class="dot yellow"></span>
+                            <span class="dot green"></span>
+                            <span style="margin-left: 10px; color: #94a3b8; font-family: monospace; font-size: 0.8rem;">AutoML Training Logs</span>
+                        </div>
+                        <div class="terminal-body">
+                            <div style="color: #4ade80;">$ Generating model code using Qwen 2.5 Coder 32B...</div>
+                            <pre><code class="language-python">${data.generated_code}</code></pre>
+                            <div style="color: #4ade80; margin-top: 10px;">$ Executing code on CockroachDB data...</div>
+                            <pre style="color: #cbd5e1; background: #0f172a; padding: 10px; border-radius: 4px; margin-top: 5px;">${data.execution_logs || "No logs output."}</pre>
+                            <div style="color: #fbbf24; font-weight: bold; margin-top: 10px; font-size: 1.1rem;">>> ${data.final_metric}</div>
+                        </div>
+                        <div class="metrics-badge" style="background-color: #8b5cf61a; color: #8b5cf6; border: 1px solid #8b5cf633;">
+                            ⏱️ Latency: ${data.metrics.latency_ms}ms
+                        </div>
+                    </div>
+                `;
+                chatHistory.insertAdjacentHTML('beforeend', msgHtml);
+
+            } catch (err) {
+                statusDiv.innerText = "Error: " + err.message;
+                statusDiv.style.color = "var(--error)";
+                
+                const errHtml = `
+                    <div class="message bot error">
+                        AutoML Failed: ${err.message}
+                    </div>
+                `;
+                chatHistory.insertAdjacentHTML('beforeend', errHtml);
+            }
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
     </script>
 </body>
 </html>
