@@ -15,7 +15,7 @@ RUN curl -sL https://binaries.cockroachdb.com/ccloud/ccloud_linux-amd64_0.2.2.ta
     chmod +x /usr/local/bin/ccloud
 
 # Install CPU-only PyTorch FIRST (avoids pulling 3.5GB of CUDA/cuDNN libs)
-RUN pip install --no-cache-dir numpy==1.26.4 torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
 
 # Install pre-compiled soxr wheel to bypass C++ compilation failure
 RUN pip install --no-deps https://files.pythonhosted.org/packages/2b/97/cbce72f9c8b5c9c667eb55dc55be20a87c610dba55c0466c77498c1a8c97/soxr-0.3.7-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -23,6 +23,9 @@ RUN pip install --no-deps https://files.pythonhosted.org/packages/2b/97/cbce72f9
 COPY requirements.txt .
 RUN pip install --upgrade pip --no-cache-dir && \
     pip install -r requirements.txt --no-cache-dir
+
+# Install torchvision AFTER Pillow and Numpy are already installed via requirements.txt
+RUN pip install --no-cache-dir torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cpu
 
 # Pre-bake the embedding model into /var/task/hf_cache so cold starts are instant!
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-mpnet-base-v2')"
