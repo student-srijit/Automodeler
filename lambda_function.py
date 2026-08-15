@@ -547,76 +547,319 @@ def detect_modality(filename):
     return 'tabular'
 
 
-def _run_two_agent_pipeline(analyst_prompt, coder_extra_context, bucket, start_time):
-    """Shared 2-Agent pipeline: Analyst -> Coder -> exec() -> return result dict."""
+def call_nemotron_reasoner(code, execution_logs, metric, target_column, round_num, approach_history):
+    """
+    Agent 3: Nvidia Nemotron Ultra 253B via OpenRouter.
+    Deep-reasons about ML code quality, hyperparameters, and approach.
+    Returns a dict: {verdict, reasoning, suggestions, new_algorithm}
+    """
+    from openai import OpenAI
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.environ.get('OPENROUTER_API_KEY', ''),
+        default_headers={"HTTP-Referer": "https://automodeler.ai", "X-Title": "AutoModeler"}
+    )
+    
+    prompt = f"""You are an elite ML Systems Reasoning Expert conducting a code review.
+
+PIPELINE ROUND: {round_num}/3
+TARGET COLUMN: {target_column}
+APPROACHES TRIED SO FAR:
+{chr(10).join(approach_history) if approach_history else 'None yet.'}
+
+=== GENERATED ML CODE ===
+{code[:6000]}
+
+=== EXECUTION OUTPUT ===
+{execution_logs[:3000]}
+
+=== METRIC ACHIEVED ===
+{metric}
+
+Perform deep reasoning on this pipeline:
+1. Are the hyperparameters optimal? (n_neighbors, C, n_estimators, etc.)
+2. Is the feature engineering appropriate for the data type?
+3. Is the algorithm the best choice, or would a different one score higher?
+4. Are there bugs, data leakage, or implementation inefficiencies?
+5. If metric is N/A or execution crashed, what specifically caused it?
+
+Respond ONLY with a valid JSON object (no markdown, no explanation outside JSON):
+{{
+  "verdict": "accept" | "improve" | "new_approach",
+  "reasoning": "your concise but thorough analysis here",
+  "suggestions": "specific, concrete code-level improvements to apply",
+  "new_algorithm": "if verdict is new_approach: describe the completely different algorithm and strategy to try instead"
+}}
+
+Verdict rules:
+- "accept": metric is strong and code quality is good
+- "improve": same core approach, but fix hyperparameters / feature engineering / bugs
+- "new_approach": fundamentally different algorithm needed (use only in round 1 or 2)
+"""
+    
+    print(f">>> [Nemotron Reasoner] Calling nvidia/llama-3.1-nemotron-ultra-253b-v1:free ...")
+    resp = client.chat.completions.create(
+        model="nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=4096,
+        temperature=0.2
+    )
+    
+    raw = resp.choices[0].message.content.strip()
+    print(f">>> [Nemotron] Raw response: {raw[:500]}")
+    
+    # Robustly extract JSON
+    json_match = re.search(r'\{[\s\S]*?\}(?=\s*$|\s*\n)', raw)
+    if not json_match:
+        json_match = re.search(r'\{[\s\S]+\}', raw)
+    if json_match:
+        try:
+            return json.loads(json_match.group())
+        except Exception:
+            pass
+    
+    # Fallback: parse verdict manually
+    verdict = "improve"
+    if "accept" in raw.lower()[:200]:
+        verdict = "accept"
+    elif "new_approach" in raw.lower()[:200] or "new approach" in raw.lower()[:200]:
+        verdict = "new_approach"
+    return {"verdict": verdict, "reasoning": raw[:1000], "suggestions": raw[500:1500], "new_algorithm": ""}
+
+
+def _parse_metric_value(metric_str):
+    """Extract float from metric string like '0.87 accuracy' or 'FINAL_METRIC: 0.912'."""
+    if not metric_str or metric_str in ("N/A", "Metric output not found.", "Ready"):
+        return -1.0
+    try:
+        nums = re.findall(r'[\d]*\.?[\d]+', str(metric_str))
+        if nums:
+            val = float(nums[0])
+            # If it looks like a percentage (e.g. 87.5), normalize
+            return val / 100.0 if val > 1.5 else val
+    except Exception:
+        pass
+    return -1.0
+
+
+def _run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time, target_column="target", max_rounds=3):
+    """
+    Multi-Agent Reasoning Loop:
+    Round 1: DeepSeek-R1 Analyst → LLaMA-3.3 Coder → exec() → Score
+    Review:  Nemotron 253B reviews code + metric → verdict
+    Round 2: If 'improve': LLaMA re-codes with Nemotron suggestions → exec()
+    Round 3: If 'new_approach': Full re-strategize with Nemotron's new algorithm
+    Returns: best result across all rounds + full reasoning history
+    """
     import io, sys
     groq_client = Groq(api_key=os.environ['GROQ_API_KEY'])
-
-    # Agent 1: Analyst
-    print(">>> Prompting Lead Analyst (LLaMA 3.3 70B)...")
-    analyst_response = groq_client.chat.completions.create(
-        messages=[{"role": "user", "content": analyst_prompt}],
-        model="llama-3.3-70b-versatile",
-        temperature=0.1
-    )
-    strategy_plan = analyst_response.choices[0].message.content.strip()
-    print(">>> Strategy Developed:\n", strategy_plan)
-
-    # Agent 2: Coder
-    coder_prompt = f"""You are an elite AI Coding Agent.
-Our Lead Data Scientist has provided the following architectural strategy:
+    
+    best_result = None
+    best_metric_val = -1.0
+    rounds_history = []
+    approach_history = []
+    
+    current_analyst_prompt = analyst_prompt
+    current_coder_extra = coder_extra_context
+    
+    for round_num in range(1, max_rounds + 1):
+        print(f"\n{'='*60}")
+        print(f">>> REASONING LOOP — ROUND {round_num}/{max_rounds}")
+        print(f"{'='*60}")
+        
+        # ── Agent 1: Analyst (DeepSeek-R1 on Groq — reasoning model for strategy) ──
+        print(">>> [Agent 1 — Analyst] deepseek-r1-distill-llama-70b (Groq)")
+        try:
+            analyst_response = groq_client.chat.completions.create(
+                messages=[{"role": "user", "content": current_analyst_prompt}],
+                model="deepseek-r1-distill-llama-70b",
+                max_tokens=2048,
+                temperature=0.1
+            )
+            strategy_plan = analyst_response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f">>> DeepSeek-R1 failed ({e}), falling back to LLaMA 3.3 70B")
+            analyst_response = groq_client.chat.completions.create(
+                messages=[{"role": "user", "content": current_analyst_prompt}],
+                model="llama-3.3-70b-versatile",
+                max_tokens=2048,
+                temperature=0.1
+            )
+            strategy_plan = analyst_response.choices[0].message.content.strip()
+        
+        print(f">>> [Analyst] Strategy:\n{strategy_plan[:500]}...")
+        approach_history.append(f"Round {round_num}: {strategy_plan[:150]}...")
+        
+        # ── Agent 2: Coder (LLaMA-3.3-70B on Groq — best for code gen) ──
+        coder_prompt = f"""You are an elite AI Coding Agent. Implement this ML strategy precisely.
+Our Lead Data Scientist's strategy:
 ----------
 {strategy_plan}
 ----------
-{coder_extra_context}
-Calculate an appropriate metric if possible and print "FINAL_METRIC: <value>", otherwise print "FINAL_METRIC: Ready".
-Output ONLY the raw Python code. Do not use markdown blocks. Just pure code.
+{current_coder_extra}
+CRITICAL: Calculate a numeric performance metric and print "FINAL_METRIC: <numeric_value>" at the very end.
+Output ONLY raw Python code. No markdown. No ``` blocks. Pure executable Python only.
 """
-    print(">>> Prompting Senior Coder (LLaMA 3.3 70B)...")
-    coder_response = groq_client.chat.completions.create(
-        messages=[{"role": "user", "content": coder_prompt}],
-        model="llama-3.3-70b-versatile",
-        temperature=0.1
-    )
-    generated_code = coder_response.choices[0].message.content.strip()
-    generated_code = re.sub(r'^```[a-z]*\n?', '', generated_code, flags=re.MULTILINE)
-    generated_code = re.sub(r'```\s*$', '', generated_code, flags=re.MULTILINE)
-    print(">>> Code Generated:\n", generated_code)
-
-    # Execute
-    print("\n=== GENERATED CODE ===")
-    print(generated_code)
-    old_stdout = sys.stdout
-    redirected_output = sys.stdout = io.StringIO()
-    try:
-        exec(generated_code, {})
-    except Exception as e:
-        sys.stdout = old_stdout
-        return {"error": f"Failed to execute generated code: {e}", "code": generated_code}
-    sys.stdout = old_stdout
-    execution_output = redirected_output.getvalue()
-    print("\n=== EXECUTION LOGS ===")
-    print(execution_output)
-
-    metric_match = re.search(r'FINAL_METRIC:\s*(.+)', execution_output)
-    final_metric = metric_match.group(1) if metric_match else "Metric output not found."
-    
-    if os.path.exists('/tmp/submission.csv'):
+        print(">>> [Agent 2 — Coder] llama-3.3-70b-versatile (Groq)")
+        coder_response = groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": coder_prompt}],
+            model="llama-3.3-70b-versatile",
+            max_tokens=8192,
+            temperature=0.05
+        )
+        generated_code = coder_response.choices[0].message.content.strip()
+        generated_code = re.sub(r'^```[a-z]*\n?', '', generated_code, flags=re.MULTILINE)
+        generated_code = re.sub(r'```\s*$', '', generated_code, flags=re.MULTILINE)
+        generated_code = generated_code.strip()
+        print(f">>> [Coder] Code ({len(generated_code)} chars) generated.")
+        
+        # ── Execute Code ──
+        print(">>> [Executor] Running generated code...")
+        old_stdout = sys.stdout
+        redirected_output = sys.stdout = io.StringIO()
+        exec_error = None
         try:
-            s3 = boto3.client('s3')
-            s3.upload_file('/tmp/submission.csv', bucket, 'submission.csv')
-            execution_output += "\n[SYSTEM] Successfully uploaded /tmp/submission.csv to S3!"
+            exec(generated_code, {})
         except Exception as e:
-            execution_output += f"\n[SYSTEM] Failed to upload /tmp/submission.csv to S3: {e}"
-            
+            exec_error = str(e)
+        finally:
+            sys.stdout = old_stdout
+        
+        execution_output = redirected_output.getvalue()
+        if exec_error:
+            execution_output += f"\nEXECUTION_ERROR: {exec_error}"
+            print(f">>> [Executor] Error: {exec_error}")
+        
+        # Parse metric
+        metric_match = re.search(r'FINAL_METRIC:\s*(.+)', execution_output)
+        final_metric = metric_match.group(1).strip() if metric_match else "N/A"
+        metric_val = _parse_metric_value(final_metric)
+        print(f">>> [Executor] FINAL_METRIC={final_metric} (numeric={metric_val:.4f})")
+        
+        # Upload submission if produced
+        if os.path.exists('/tmp/submission.csv'):
+            try:
+                s3_client = boto3.client('s3')
+                s3_client.upload_file('/tmp/submission.csv', bucket, 'submission.csv')
+                execution_output += "\n[SYSTEM] submission.csv uploaded to S3!"
+                print(">>> [Executor] Uploaded submission.csv to S3")
+            except Exception as e:
+                execution_output += f"\n[SYSTEM] S3 upload failed: {e}"
+        
+        round_data = {
+            "round": round_num,
+            "strategy": strategy_plan,
+            "code": generated_code,
+            "logs": execution_output,
+            "metric": final_metric,
+            "metric_val": metric_val,
+            "nemotron_verdict": None,
+            "nemotron_reasoning": None
+        }
+        rounds_history.append(round_data)
+        
+        # Track best across rounds
+        if best_result is None or metric_val > best_metric_val:
+            best_metric_val = metric_val
+            best_result = round_data
+            print(f">>> [Tracker] New best metric: {final_metric}")
+        
+        # Check early stop: significant improvement over previous round
+        if round_num >= 2:
+            prev_val = rounds_history[-2]["metric_val"]
+            if prev_val > 0 and metric_val >= prev_val * 1.05:
+                print(f">>> [Loop] Early stop: metric improved {prev_val:.4f} → {metric_val:.4f} (>5%)")
+                round_data["nemotron_verdict"] = "early_stop"
+                break
+        
+        # Don't call Nemotron on final round
+        if round_num >= max_rounds:
+            break
+        
+        # ── Agent 3: Nemotron Reasoner (OpenRouter) ──
+        print(f">>> [Agent 3 — Nemotron] Reviewing round {round_num} results...")
+        nemotron_review = {"verdict": "improve", "reasoning": "Reasoner unavailable.", "suggestions": "", "new_algorithm": ""}
+        try:
+            nemotron_review = call_nemotron_reasoner(
+                generated_code, execution_output, final_metric,
+                target_column, round_num, approach_history
+            )
+        except Exception as e:
+            print(f">>> [Nemotron] Call failed: {e}. Defaulting to 'improve'.")
+        
+        verdict = nemotron_review.get("verdict", "improve")
+        suggestions = nemotron_review.get("suggestions", "")
+        new_algorithm = nemotron_review.get("new_algorithm", "")
+        reasoning = nemotron_review.get("reasoning", "")
+        
+        round_data["nemotron_verdict"] = verdict
+        round_data["nemotron_reasoning"] = reasoning
+        print(f">>> [Nemotron] Verdict: {verdict.upper()}")
+        
+        if verdict == "accept":
+            print(">>> [Loop] Nemotron accepted result. Stopping early.")
+            break
+        elif verdict == "improve":
+            # Patch coder prompt with suggestions
+            current_coder_extra = f"""{coder_extra_context}
+
+REVISION INSTRUCTIONS (from Reasoning Agent — Round {round_num} review):
+Previous metric: {final_metric}
+Apply these specific improvements to the code:
+{suggestions}
+
+The previous code had these issues:
+{reasoning[:800]}
+"""
+        elif verdict == "new_approach":
+            # Full reset: new strategy prompt
+            current_analyst_prompt = f"""{analyst_prompt}
+
+IMPORTANT CONTEXT — ROUND {round_num} FAILED (metric: {final_metric}):
+A reasoning model (Nvidia Nemotron 253B) reviewed the previous approach and recommends
+switching to a COMPLETELY DIFFERENT algorithm/strategy:
+{new_algorithm}
+
+Previous reasoning:
+{reasoning[:800]}
+
+Design a fresh strategy based on the recommended approach above.
+"""
+            # Also reset coder context to clean
+            current_coder_extra = coder_extra_context
+            print(f">>> [Loop] Switching to new approach for Round {round_num + 1}.")
+    
+    # Build final response
     latency_ms = int((time.time() - start_time) * 1000)
+    best = best_result or rounds_history[0]
+    
+    improvement_history = [
+        {
+            "round": r["round"],
+            "metric": r["metric"],
+            "verdict": r.get("nemotron_verdict") or "final",
+            "reasoning_summary": (r.get("nemotron_reasoning") or "")[:200]
+        }
+        for r in rounds_history
+    ]
+    
+    print(f"\n>>> REASONING LOOP COMPLETE: {len(rounds_history)} rounds, best metric={best['metric']}")
+    
     return {
         "status": "success",
-        "final_metric": final_metric,
-        "generated_code": generated_code,
-        "execution_logs": execution_output,
-        "metrics": {"latency_ms": latency_ms}
+        "final_metric": best["metric"],
+        "generated_code": best["code"],
+        "execution_logs": best["logs"],
+        "metrics": {"latency_ms": latency_ms},
+        "rounds_taken": len(rounds_history),
+        "improvement_history": improvement_history,
+        "nemotron_reasoning": best.get("nemotron_reasoning") or ""
     }
+
+
+# Legacy alias — keeps all callers working
+def _run_two_agent_pipeline(analyst_prompt, coder_extra_context, bucket, start_time, target_column="target"):
+    return _run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time, target_column=target_column)
 
 
 def handle_image_task(bucket, filename, target_column):
@@ -645,7 +888,7 @@ Assume `{filename}` is available locally (already downloaded from S3).
 Use only: zipfile, os, Pillow (PIL), numpy, sklearn, and optionally torch+torchvision (CPU only).
 Save output to `submission.csv`.
 """
-    result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time)
+    result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time, target_column=target_column)
     result['modality'] = 'image'
     return result
 
@@ -677,7 +920,7 @@ Assume `{filename}` is available locally.
 Use only: zipfile, os, numpy, librosa, soundfile, sklearn.
 Save output to `submission.csv`.
 """
-    result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time)
+    result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time, target_column=target_column)
     result['modality'] = 'audio'
     return result
 
@@ -766,7 +1009,7 @@ Column reference (first 10 rows sample):
     except Exception as e:
         print(f"Warning: Failed to download train/test CSVs to /tmp: {e}")
 
-    result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time)
+    result = _run_two_agent_pipeline(analyst_prompt, coder_context, bucket, start_time, target_column=target_column)
     result['target_column'] = target_column
     result['modality'] = 'tabular'
     return result
