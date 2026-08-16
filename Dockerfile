@@ -31,6 +31,7 @@ RUN pip install --no-cache-dir torchvision==0.21.0 --index-url https://download.
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-mpnet-base-v2')"
 
 # Copy function code
-COPY lambda_function.py ${LAMBDA_TASK_ROOT}
+COPY lambda_function.py pipeline.py ${LAMBDA_TASK_ROOT}/
+COPY core/ ${LAMBDA_TASK_ROOT}/core/
 
 CMD ["lambda_function.lambda_handler"]

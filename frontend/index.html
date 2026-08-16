@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="config.js"></script>
 <style>
 :root {
   --void: #000000;
@@ -416,7 +417,7 @@ svg { width:16px; height:16px; stroke:currentColor; stroke-width:2; stroke-linec
             <label class="field-label" for="apiUrl">API Gateway</label>
             <div class="field-input-wrap">
               <svg class="field-icon" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-              <input type="url" id="apiUrl" value="https://yw3775c3pk.execute-api.ap-southeast-1.amazonaws.com/default/roy-lambda" placeholder="https://api.gateway/prod" autocomplete="off">
+              <input type="url" id="apiUrl" value="" placeholder="https://api.gateway/prod" autocomplete="off">
             </div>
           </div>
           <div class="field">
@@ -675,9 +676,15 @@ function markStep(el,state,label=null){
   }
 }
 
-// FILES
-const fileInput=document.getElementById('fileInput');
-const dropZone=document.getElementById('dropZone');
+  // DOM Elements
+  const apiUrlInput = document.getElementById('apiUrl');
+  
+  // Set default from config
+  if (typeof CONFIG !== 'undefined' && CONFIG.API_URL) {
+      apiUrlInput.value = CONFIG.API_URL;
+  }
+
+  const s3BucketInput = document.getElementById('s3Bucket');
 const fileList=document.getElementById('fileList');
 
 fileInput.addEventListener('change',()=>{addFiles([...fileInput.files]);fileInput.value='';});
