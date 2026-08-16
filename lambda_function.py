@@ -220,8 +220,14 @@ def profile_csv(bucket, key):
 
         profile_columns.append(col_profile)
 
+    import re
+    table_name = key.split('/')[-1].split('.')[0]
+    table_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name).lower()
+    if not table_name:
+        table_name = "submission"
+
     profile = {
-        "table_name":            "submission",
+        "table_name":            table_name,
         "total_rows":            total_rows,
         "duplicate_rows":        len(duplicate_indices),
         "columns":               profile_columns,
@@ -307,14 +313,11 @@ def generate_schema(profile):
 def deploy_schema(schema):
     conn = get_db_conn()
     with conn.cursor() as cur:
-        # Drop all existing tables in the public schema to ensure a clean slate
-        cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';")
-        existing_tables = cur.fetchall()
-        for (tbl,) in existing_tables:
-            cur.execute(f'DROP TABLE IF EXISTS "{tbl}" CASCADE;')
-            
         for tbl_def in schema["tables"]:
-            print(f"Ensuring table exists: {tbl_def['table_name']}")
+            tbl_name = tbl_def['table_name']
+            print(f"Ensuring table exists: {tbl_name}")
+            # Drop the specific table being replaced to ensure a clean slate for this upload
+            cur.execute(f'DROP TABLE IF EXISTS "{tbl_name}" CASCADE;')
             create_sql = tbl_def["create_table_sql"].replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
             cur.execute(create_sql)
             try:
