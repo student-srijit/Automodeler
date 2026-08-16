@@ -522,6 +522,7 @@ def _safe_sql_execute(conn, sql, params=None):
     try:
         with conn.cursor() as cur:
             cur.execute(sql, params)
+            conn.commit()
             if cur.description:
                 cols = [desc[0] for desc in cur.description]
                 rows = cur.fetchall()
@@ -610,15 +611,15 @@ def _generate_eda_sql(groq_client, user_query, schemas, history):
         schema_desc += "\n\n"
         
     resp = groq_client.chat.completions.create(
-        messages=_build_messages(f"""You are a CockroachDB SQL expert. Generate ONLY a single safe, read-only SELECT query to answer the user's EDA question.
+        messages=_build_messages(f"""You are a CockroachDB SQL expert. Generate ONLY a single safe SQL query to answer the user's question or fulfill their request.
 Available Schemas:
 {schema_desc}
 Rules:
 1. Output ONLY a JSON object: {{"sql": "...", "explanation": "..."}}
-2. Use only SELECT statements — never INSERT, UPDATE, DELETE, DROP
-3. Choose the most appropriate table based on the user's question. If the user asks about a specific file, query its corresponding table.
-4. Use NULL checks with IS NULL / IS NOT NULL
-5. For missing values count: SELECT COUNT(*) - COUNT(col) AS missing_count FROM table
+2. Generate a SELECT statement for analysis. If the user explicitly asks to add, update, delete, clean, or modify data (e.g., adding missing values or new rows), generate the appropriate INSERT, UPDATE, or DELETE statement.
+3. NEVER generate DROP TABLE, ALTER TABLE, or schema-destroying queries.
+4. Choose the most appropriate table based on the user's question. If the user asks about a specific file, query its corresponding table.
+5. Use NULL checks with IS NULL / IS NOT NULL
 6. For distributions: use GROUP BY with COUNT(*)
 7. Keep LIMIT ≤ 50 for row-fetching queries
 8. Column names with spaces must be quoted with double quotes
@@ -698,13 +699,18 @@ def _check_data_quality(conn, table_name, schema):
 
 def _format_results_with_llm(groq_client, user_query, sql, cols, rows, explanation):
     """Format SQL result rows into beautiful Markdown using LLaMA."""
-    if not rows and not cols:
+    
+    # If this was a successful INSERT/UPDATE/DELETE
+    is_dml = any(sql.strip().upper().startswith(kw) for kw in ['INSERT', 'UPDATE', 'DELETE'])
+    
+    if not rows and not cols and not is_dml:
         return "The query returned no results."
     
     # Build a clean data summary (cap at 50 rows for token safety)
     data_summary = {
         "query_executed": sql,
         "explanation": explanation,
+        "status": "Success (Data Modified)" if is_dml else "Success (Data Retrieved)",
         "columns": cols,
         "rows": rows[:50],
         "total_rows_returned": len(rows)
@@ -713,15 +719,16 @@ def _format_results_with_llm(groq_client, user_query, sql, cols, rows, explanati
     resp = groq_client.chat.completions.create(
         messages=[{
             "role": "system",
-            "content": """You are a data analyst presenting SQL query results to a business user.
+            "content": """You are a highly intelligent Data Scientist AI presenting database results to a user.
 Format the provided data clearly and beautifully using Markdown.
 Rules:
-1. NEVER invent numbers or facts not present in the data
-2. Use a Markdown table if results have multiple rows/columns
-3. Use **bold** for key statistics
-4. Provide a 1-2 sentence plain-English summary at the top
-5. If only a single value is returned, highlight it prominently
-6. Do NOT repeat the SQL query to the user"""
+1. NEVER invent numbers or facts not present in the data.
+2. Use a Markdown table if results have multiple rows/columns.
+3. Use **bold** for key statistics.
+4. Provide a 1-2 sentence plain-English summary at the top.
+5. Proactively analyze the data: point out missing values, interesting anomalies, or key trends if they exist in the result.
+6. Do NOT repeat the SQL query to the user.
+7. ALWAYS end your response with a "### Recommended Follow-up Questions:" section containing 2-3 highly intelligent, proactive questions the user can ask next to further explore, clean, or model this specific data."""
         }, {
             "role": "user",
             "content": f"Original Question: {user_query}\n\nSQL Results:\n{json.dumps(data_summary, indent=2)}"
