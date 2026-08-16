@@ -10,6 +10,7 @@ from core.transformer import DataTransformer
 from core.vector_engine import VectorEngine
 from core.optimizer import QueryOptimizer
 from core.utils import s3
+from core.visual_profiler import VisualProfiler
 
 class AutoModelerPipeline:
     @staticmethod
@@ -36,6 +37,9 @@ class AutoModelerPipeline:
             
             print(">>> STAGE 1: Advanced Data Profiling...")
             profile, headers, rows, dupe_idx = DataProfiler.profile_csv(bucket, key, s3)
+
+            print(">>> STAGE 1.5: Visual EDA Generation...")
+            VisualProfiler.generate_and_upload_eda(bucket, key, s3, headers, rows)
 
             print(">>> STAGE 3: Cluster Sizing...")
             cluster_plan = ClusterProvisioner.size_cluster(profile)

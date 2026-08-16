@@ -24,7 +24,7 @@ subprocess.run(
 )
 
 print("3. Building Docker Image...")
-subprocess.run("docker build --provenance=false -t automodeler-lambda .", shell=True, check=True)
+subprocess.run("docker build --platform linux/amd64 --provenance=false -t automodeler-lambda .", shell=True, check=True)
 
 print("4. Tagging Docker Image...")
 subprocess.run("docker tag automodeler-lambda:latest 324037324041.dkr.ecr.ap-southeast-1.amazonaws.com/automodeler-lambda:latest", shell=True, check=True)
