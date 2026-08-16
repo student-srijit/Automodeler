@@ -583,29 +583,33 @@ Respond ONLY with a valid JSON object and nothing else. Examples:
         return {"intent": "eda"}
 
 
-def _generate_eda_sql(groq_client, user_query, table_name, schema):
+def _generate_eda_sql(groq_client, user_query, schemas):
     """
     Generate a safe read-only SQL SELECT query for any EDA question.
     Returns (sql_string, explanation)
     """
-    schema_desc = "\n".join([f"  - {col} ({dtype})" for col, dtype in schema.items()])
+    schema_desc = ""
+    for t_name, schema in schemas.items():
+        schema_desc += f'Table: "{t_name}"\n'
+        schema_desc += "\n".join([f"  - {col} ({dtype})" for col, dtype in schema.items()])
+        schema_desc += "\n\n"
+        
     resp = groq_client.chat.completions.create(
         messages=[{
             "role": "system",
             "content": f"""You are a CockroachDB SQL expert. Generate ONLY a single safe, read-only SELECT query to answer the user's EDA question.
-Table: "{table_name}"
-Columns:
+Available Schemas:
 {schema_desc}
-
 Rules:
 1. Output ONLY a JSON object: {{"sql": "...", "explanation": "..."}}
 2. Use only SELECT statements — never INSERT, UPDATE, DELETE, DROP
-3. Use NULL checks with IS NULL / IS NOT NULL
-4. For missing values count: SELECT COUNT(*) - COUNT(col) AS missing_count FROM table
-5. For distributions: use GROUP BY with COUNT(*)
-6. Keep LIMIT ≤ 50 for row-fetching queries
-7. Column names with spaces must be quoted with double quotes
-8. Do NOT reference the 'embedding' column"""
+3. Choose the most appropriate table based on the user's question. If the user asks about a specific file, query its corresponding table.
+4. Use NULL checks with IS NULL / IS NOT NULL
+5. For missing values count: SELECT COUNT(*) - COUNT(col) AS missing_count FROM table
+6. For distributions: use GROUP BY with COUNT(*)
+7. Keep LIMIT ≤ 50 for row-fetching queries
+8. Column names with spaces must be quoted with double quotes
+9. Do NOT reference the 'embedding' column"""
         }, {
             "role": "user",
             "content": user_query
@@ -740,7 +744,8 @@ def handle_agent_chat(user_query, db_url, pending_clean_context=None):
     
     # ─── Step 1: Connect and find table ────────────────────────────────────────
     conn = None
-    table_name = None
+    table_names = []
+    schemas = {}
     try:
         conn = get_db_conn()
         with conn.cursor() as cur:
@@ -748,18 +753,16 @@ def handle_agent_chat(user_query, db_url, pending_clean_context=None):
                 SELECT table_name FROM information_schema.tables 
                 WHERE table_schema = 'public' 
                 AND table_name NOT IN ('model_experiments')
-                LIMIT 1
             """)
-            res = cur.fetchone()
-            if res:
-                table_name = res[0]
+            table_names = [row[0] for row in cur.fetchall()]
     except Exception as e:
         return {"answer": f"⚠️ Could not connect to the database: {e}"}
     
-    if not table_name:
+    if not table_names:
         return {"answer": "I don't have any data loaded yet. Please upload a dataset first!"}
     
-    schema = _get_table_schema(conn, table_name)
+    for t in table_names:
+        schemas[t] = _get_table_schema(conn, t)
     
     # ─── Step 2: Classify Intent ────────────────────────────────────────────────
     intent_data = _classify_intent(groq_client, user_query)
@@ -800,7 +803,8 @@ def handle_agent_chat(user_query, db_url, pending_clean_context=None):
         else:
             fill_value = f"'{method}'"  # user typed a literal value
         
-        clean_sql = f'UPDATE "{table_name}" SET "{col}" = {fill_value} WHERE "{col}" IS NULL'
+        table_to_clean = pending_clean_context.get("table", table_names[0])
+        clean_sql = f'UPDATE "{table_to_clean}" SET "{col}" = {fill_value} WHERE "{col}" IS NULL'
         print(f">>> [Clean Agent] Executing: {clean_sql}")
         _, _, err = _safe_sql_execute(conn, clean_sql)
         conn.close()
@@ -809,12 +813,12 @@ def handle_agent_chat(user_query, db_url, pending_clean_context=None):
             return {"answer": f"❌ Cleaning failed for **{col}**: `{err}`\n\nYou may need to handle this manually."}
         
         return {
-            "answer": f"✅ **Done!** Filled **{pending_clean_context.get('count', '?')} missing values** in column `{col}` using **{method}**.\n\nThe data is now clean. Would you like me to check for more issues, or are you ready to **train the model**?",
+            "answer": f"✅ **Done!** Filled **{pending_clean_context.get('count', '?')} missing values** in column `{col}` using **{method}** in `{table_to_clean}`.\n\nThe data is now clean. Would you like me to check for more issues, or are you ready to **train the model**?",
             "pending_clean": None
         }
     
     # INTENT: EDA — Text-to-SQL
-    sql, explanation = _generate_eda_sql(groq_client, user_query, table_name, schema)
+    sql, explanation = _generate_eda_sql(groq_client, user_query, schemas)
     
     if not sql:
         conn.close()
@@ -831,11 +835,17 @@ def handle_agent_chat(user_query, db_url, pending_clean_context=None):
     
     # ─── Step 4: Proactive Data Quality Check ──────────────────────────────────
     # After answering, silently check for data issues and offer to fix the worst one
+    used_table = table_names[0]
+    for t in table_names:
+        if f'"{t}"' in sql or f' {t} ' in sql or f' {t};' in sql or f' {t}\n' in sql:
+            used_table = t
+            break
+
     pending_clean = None
     quality_prompt_addition = ""
     
     try:
-        issues, total_rows = _check_data_quality(conn, table_name, schema)
+        issues, total_rows = _check_data_quality(conn, used_table, schemas[used_table])
         if issues:
             worst = max(issues, key=lambda x: x["count"])
             col = worst["column"]
@@ -852,9 +862,10 @@ def handle_agent_chat(user_query, db_url, pending_clean_context=None):
                 method_hint = "drop those rows"
                 default_method = "drop"
             
-            quality_prompt_addition = f"\n\n---\n💡 **Data Quality Alert:** I noticed `{col}` has **{count} missing values** ({pct}% of {total_rows} rows). Want me to {method_hint}? Just say **yes** and specify the method, or **no** to handle it yourself."
+            quality_prompt_addition = f"\n\n---\n💡 **Data Quality Alert (`{used_table}`):** I noticed `{col}` has **{count} missing values** ({pct}% of {total_rows} rows). Want me to {method_hint}? Just say **yes** and specify the method, or **no** to handle it yourself."
             
             pending_clean = {
+                "table": used_table,
                 "column": col,
                 "count": count,
                 "mean": worst.get("mean"),
