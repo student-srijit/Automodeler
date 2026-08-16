@@ -45,6 +45,73 @@ def get_db_conn():
     conn.autocommit = True
     return conn
 
+
+# ─── CockroachDB Experiment Tracker ────────────────────────────────────────────
+
+def ensure_experiments_table(conn):
+    """Create the model_experiments table if it doesn't exist yet."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS model_experiments (
+                id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                target_column STRING NOT NULL,
+                final_metric STRING,
+                metric_value FLOAT,
+                rounds_taken INT,
+                s3_model_url STRING,
+                agent_reasoning JSONB,
+                created_at TIMESTAMPTZ DEFAULT now()
+            );
+        """)
+    print(">>> [Tracker] model_experiments table ready.")
+
+
+def log_experiment_to_cockroach(target_column, final_metric, metric_value, rounds_taken, s3_model_url, reasoning_summary):
+    """Log a completed ML experiment to CockroachDB for the Experiment Tracker."""
+    try:
+        conn = get_db_conn()
+        ensure_experiments_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO model_experiments (target_column, final_metric, metric_value, rounds_taken, s3_model_url, agent_reasoning)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                target_column,
+                final_metric,
+                float(metric_value) if metric_value else None,
+                rounds_taken,
+                s3_model_url,
+                json.dumps({"summary": reasoning_summary[:500] if reasoning_summary else ""})
+            ))
+        conn.close()
+        print(f">>> [Tracker] Logged experiment for target='{target_column}' metric={final_metric}")
+    except Exception as e:
+        print(f">>> [Tracker] Failed to log experiment: {e}")
+
+
+# ─── S3 Model Registry ──────────────────────────────────────────────────────────
+
+def publish_model_to_s3(bucket, target_column):
+    """
+    If the agent generated a model file at /tmp/model.pkl, upload it to the
+    S3 model registry and return the S3 URI. Otherwise return None.
+    """
+    model_path = '/tmp/model.pkl'
+    if not os.path.exists(model_path):
+        print(">>> [Registry] No model.pkl found at /tmp — skipping registry upload.")
+        return None
+    try:
+        registry_key = f"registry/{target_column}_model.pkl"
+        s3.upload_file(model_path, bucket, registry_key)
+        s3_uri = f"s3://{bucket}/{registry_key}"
+        print(f">>> [Registry] Model published to {s3_uri}")
+        return s3_uri
+    except Exception as e:
+        print(f">>> [Registry] Upload failed: {e}")
+        return None
+
+
+
 # ═══════════════════════════════════════════════════════════════════
 # STAGE 1: ADVANCED DATA PROFILER
 # ═══════════════════════════════════════════════════════════════════
@@ -435,106 +502,393 @@ def provision_agent_cluster():
             print(f"ccloud stderr: {e.stderr}")
         raise e
 
-def handle_agent_chat(user_query, db_url):
-    print(f">>> Handling chat query: {user_query}")
+def _get_table_schema(conn, table_name):
+    """Fetch table schema as a dict of {column_name: data_type}."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT column_name, data_type 
+            FROM information_schema.columns 
+            WHERE table_schema = 'public' AND table_name = %s
+            ORDER BY ordinal_position
+        """, (table_name,))
+        return {row[0]: row[1] for row in cur.fetchall() if row[0] != 'embedding'}
+
+
+def _safe_sql_execute(conn, sql, params=None):
+    """Execute a SQL query safely and return (columns, rows, error)."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            if cur.description:
+                cols = [desc[0] for desc in cur.description]
+                rows = cur.fetchall()
+                # Serialize types
+                serialized_rows = []
+                for row in rows:
+                    serialized_rows.append([
+                        str(v) if not isinstance(v, (int, float, str, bool, type(None))) else v 
+                        for v in row
+                    ])
+                return cols, serialized_rows, None
+            else:
+                return [], [], None  # DML success
+    except Exception as e:
+        return None, None, str(e)
+
+
+def _classify_intent(groq_client, user_query):
+    """
+    Classify user intent into one of:
+    - 'train': user wants to train an ML model
+    - 'clean_action': user approved/rejected a data cleaning action
+    - 'eda': user wants to explore / analyze data
+    Returns dict with 'intent' and optional 'target' / 'action' / 'confirm'
+    """
+    resp = groq_client.chat.completions.create(
+        messages=[{
+            "role": "system",
+            "content": """You are an intent classifier for an AI data platform. Classify the user message into exactly one of:
+- "train": user wants to predict, train, or build a model for a specific column
+- "clean_action": user is responding to a data cleaning suggestion (approving, rejecting, or specifying a method)
+- "eda": user wants to explore data, ask statistics, find missing values, get distributions, etc.
+
+Respond ONLY with a valid JSON object and nothing else. Examples:
+{"intent": "train", "target": "Price"}
+{"intent": "eda"}
+{"intent": "clean_action", "confirm": true, "method": "mean"}
+{"intent": "clean_action", "confirm": false}"""
+        }, {
+            "role": "user",
+            "content": user_query
+        }],
+        model="llama-3.3-70b-versatile",
+        temperature=0.0,
+        max_tokens=100
+    )
+    raw = resp.choices[0].message.content.strip()
+    # Strip markdown if any
+    raw = re.sub(r'^```[a-z]*\n?', '', raw, flags=re.MULTILINE)
+    raw = re.sub(r'```\s*$', '', raw, flags=re.MULTILINE)
+    try:
+        return json.loads(raw.strip())
+    except Exception:
+        # Fallback: if it looks like a train intent
+        if any(w in user_query.lower() for w in ['predict', 'train', 'model', 'classify', 'forecast']):
+            # Try to extract column name
+            words = user_query.split()
+            for i, w in enumerate(words):
+                if w.lower() in ('predict', 'for', 'target', 'classify'):
+                    if i + 1 < len(words):
+                        return {"intent": "train", "target": words[i+1].strip("'\".,?")}
+        return {"intent": "eda"}
+
+
+def _generate_eda_sql(groq_client, user_query, table_name, schema):
+    """
+    Generate a safe read-only SQL SELECT query for any EDA question.
+    Returns (sql_string, explanation)
+    """
+    schema_desc = "\n".join([f"  - {col} ({dtype})" for col, dtype in schema.items()])
+    resp = groq_client.chat.completions.create(
+        messages=[{
+            "role": "system",
+            "content": f"""You are a CockroachDB SQL expert. Generate ONLY a single safe, read-only SELECT query to answer the user's EDA question.
+Table: "{table_name}"
+Columns:
+{schema_desc}
+
+Rules:
+1. Output ONLY a JSON object: {{"sql": "...", "explanation": "..."}}
+2. Use only SELECT statements — never INSERT, UPDATE, DELETE, DROP
+3. Use NULL checks with IS NULL / IS NOT NULL
+4. For missing values count: SELECT COUNT(*) - COUNT(col) AS missing_count FROM table
+5. For distributions: use GROUP BY with COUNT(*)
+6. Keep LIMIT ≤ 50 for row-fetching queries
+7. Column names with spaces must be quoted with double quotes
+8. Do NOT reference the 'embedding' column"""
+        }, {
+            "role": "user",
+            "content": user_query
+        }],
+        model="llama-3.3-70b-versatile",
+        temperature=0.0,
+        max_tokens=512
+    )
+    raw = resp.choices[0].message.content.strip()
+    raw = re.sub(r'^```[a-z]*\n?', '', raw, flags=re.MULTILINE)
+    raw = re.sub(r'```\s*$', '', raw, flags=re.MULTILINE)
+    try:
+        parsed = json.loads(raw.strip())
+        return parsed.get("sql", ""), parsed.get("explanation", "")
+    except Exception:
+        # Try to extract raw SQL
+        sql_match = re.search(r'SELECT[\s\S]+?;', raw, re.IGNORECASE)
+        if sql_match:
+            return sql_match.group(), "Generated query"
+        return "", ""
+
+
+def _check_data_quality(conn, table_name, schema):
+    """
+    Run quick data quality checks and return a structured report.
+    Returns a list of issues like:
+    [{"column": "Age", "issue": "missing_values", "count": 15, "suggestion": "fill_mean", "mean": 34.2}, ...]
+    """
+    issues = []
+    total_rows = 0
+    
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f'SELECT COUNT(*) FROM "{table_name}"')
+            total_rows = cur.fetchone()[0]
+    except Exception:
+        return issues, total_rows
+    
+    numeric_types = {'integer', 'bigint', 'numeric', 'double precision', 'real', 'smallint'}
+    
+    for col, dtype in schema.items():
+        try:
+            with conn.cursor() as cur:
+                # Count nulls
+                cur.execute(f'SELECT COUNT(*) FROM "{table_name}" WHERE "{col}" IS NULL')
+                null_count = cur.fetchone()[0]
+                
+                if null_count > 0:
+                    issue = {
+                        "column": col,
+                        "issue": "missing_values",
+                        "count": null_count,
+                        "pct": round((null_count / total_rows) * 100, 1) if total_rows > 0 else 0
+                    }
+                    
+                    if dtype in numeric_types:
+                        # Get mean and median suggestion
+                        cur.execute(f'SELECT AVG(CAST("{col}" AS FLOAT)) FROM "{table_name}" WHERE "{col}" IS NOT NULL')
+                        mean_val = cur.fetchone()[0]
+                        if mean_val is not None:
+                            issue["suggestion"] = "fill_mean_or_median"
+                            issue["mean"] = round(float(mean_val), 4)
+                    else:
+                        # Get mode for categorical
+                        cur.execute(f'SELECT "{col}", COUNT(*) as cnt FROM "{table_name}" WHERE "{col}" IS NOT NULL GROUP BY "{col}" ORDER BY cnt DESC LIMIT 1')
+                        mode_res = cur.fetchone()
+                        if mode_res:
+                            issue["suggestion"] = "fill_mode_or_unknown"
+                            issue["mode"] = str(mode_res[0])
+                    
+                    issues.append(issue)
+        except Exception as e:
+            print(f"Data quality check failed for {col}: {e}")
+    
+    return issues, total_rows
+
+
+def _format_results_with_llm(groq_client, user_query, sql, cols, rows, explanation):
+    """Format SQL result rows into beautiful Markdown using LLaMA."""
+    if not rows and not cols:
+        return "The query returned no results."
+    
+    # Build a clean data summary (cap at 50 rows for token safety)
+    data_summary = {
+        "query_executed": sql,
+        "explanation": explanation,
+        "columns": cols,
+        "rows": rows[:50],
+        "total_rows_returned": len(rows)
+    }
+    
+    resp = groq_client.chat.completions.create(
+        messages=[{
+            "role": "system",
+            "content": """You are a data analyst presenting SQL query results to a business user.
+Format the provided data clearly and beautifully using Markdown.
+Rules:
+1. NEVER invent numbers or facts not present in the data
+2. Use a Markdown table if results have multiple rows/columns
+3. Use **bold** for key statistics
+4. Provide a 1-2 sentence plain-English summary at the top
+5. If only a single value is returned, highlight it prominently
+6. Do NOT repeat the SQL query to the user"""
+        }, {
+            "role": "user",
+            "content": f"Original Question: {user_query}\n\nSQL Results:\n{json.dumps(data_summary, indent=2)}"
+        }],
+        model="llama-3.3-70b-versatile",
+        temperature=0.1,
+        max_tokens=1024
+    )
+    return resp.choices[0].message.content.strip()
+
+
+def handle_agent_chat(user_query, db_url, pending_clean_context=None):
+    """
+    Intelligent EDA Chat Agent with Text-to-SQL, Data Cleaning Copilot, and ML Intent Routing.
+    
+    Capabilities:
+    - Train Intent: routes user to ML training pipeline
+    - EDA Intent: generates + executes SQL, formats beautifully, anti-hallucinated
+    - Clean Intent: handles approve/reject/specify-method for data cleaning
+    - Proactive Quality Check: after first EDA, proactively offers to fix data issues
+    """
+    print(f">>> [Chat Agent] Query: {user_query}")
     start_time = time.time()
     
     if db_url:
         os.environ["DATABASE_URL"] = db_url
 
-    # 0. Intent Routing
-    try:
-        groq_client = Groq(api_key=os.environ['GROQ_API_KEY'])
-        intent_res = groq_client.chat.completions.create(
-            messages=[{"role": "user", "content": f"Does this user want to train an ML model or predict something? User: '{user_query}'\nIf YES, extract the exact name of the target column they want to predict and output JUST the column name (e.g. 'Course', 'Price', 'Category'). If NO, output 'NO_INTENT'."}],
-            model="llama-3.3-70b-versatile", temperature=0.1
-        )
-        intent_ans = intent_res.choices[0].message.content.strip()
-        if "NO_INTENT" not in intent_ans.upper() and len(intent_ans) < 30:
-            return {"intent": "train", "target": intent_ans.strip(" '\"")}
-    except Exception as e:
-        print(f"Intent routing failed: {e}")
-
-    # 1. Embed user query
-    model = get_model()
-    query_vector = model.encode(user_query).tolist()
+    groq_client = Groq(api_key=os.environ['GROQ_API_KEY'])
     
-    # 2. Find table name dynamically
-    conn = get_db_conn()
+    # ─── Step 1: Connect and find table ────────────────────────────────────────
+    conn = None
     table_name = None
-    with conn.cursor() as cur:
-        cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' LIMIT 1;")
-        res = cur.fetchone()
-        if res:
-            table_name = res[0]
-            
-    if not table_name:
-        return {"answer": "I don't have any data loaded in my memory yet."}
-        
-    # 3. Vector search & Indexes
-    context_rows = []
-    active_indexes = []
     try:
+        conn = get_db_conn()
         with conn.cursor() as cur:
-            # Fetch actual query execution plan
-            explain_sql = f"EXPLAIN SELECT * FROM {table_name} ORDER BY embedding <-> %s::vector LIMIT 5;"
-            cur.execute(explain_sql, (str(query_vector),))
-            plan = "Execution Plan: "
-            for row in cur.fetchall():
-                line = row[0]
-                if 'vector search' in line:
-                    plan += "Vector KNN Search -> "
-                elif 'lookup join' in line:
-                    plan += "Row Lookup Join -> "
-                elif 'table:' in line:
-                    idx = line.split('@')[-1].strip()
-                    plan += f"Index({idx}) "
-            active_indexes = [plan.strip()]
-                
-            # Vector search
-            cur.execute(f"SELECT * FROM {table_name} ORDER BY embedding <-> %s::vector LIMIT 5;", (str(query_vector),))
-            cols = [desc[0] for desc in cur.description]
-            for row in cur.fetchall():
-                row_dict = dict(zip(cols, row))
-                if 'embedding' in row_dict:
-                    del row_dict['embedding']
-                for k, v in row_dict.items():
-                    if type(v).__name__ in ['datetime', 'date', 'Timestamp']:
-                        row_dict[k] = str(v)
-                context_rows.append(row_dict)
+            cur.execute("""
+                SELECT table_name FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name NOT IN ('model_experiments')
+                LIMIT 1
+            """)
+            res = cur.fetchone()
+            if res:
+                table_name = res[0]
     except Exception as e:
-        print(f"Vector search failed: {e}")
-    finally:
+        return {"answer": f"⚠️ Could not connect to the database: {e}"}
+    
+    if not table_name:
+        return {"answer": "I don't have any data loaded yet. Please upload a dataset first!"}
+    
+    schema = _get_table_schema(conn, table_name)
+    
+    # ─── Step 2: Classify Intent ────────────────────────────────────────────────
+    intent_data = _classify_intent(groq_client, user_query)
+    intent = intent_data.get("intent", "eda")
+    print(f">>> [Chat Agent] Intent: {intent_data}")
+    
+    # ─── Step 3: Route by Intent ────────────────────────────────────────────────
+    
+    # INTENT: Train ML model
+    if intent == "train":
+        target = intent_data.get("target", "").strip()
+        if not target:
+            return {"answer": "I'd love to train a model! Which column would you like to predict? (e.g. 'Price', 'Category', 'Churn')"}
+        return {"intent": "train", "target": target}
+    
+    # INTENT: User is responding to a data cleaning suggestion
+    if intent == "clean_action" and pending_clean_context:
+        confirmed = intent_data.get("confirm", False)
+        
+        if not confirmed:
+            conn.close()
+            return {
+                "answer": "No problem! I'll leave the data as-is. You can clean it yourself and re-upload, or proceed to train the model directly.",
+                "pending_clean": None
+            }
+        
+        # Execute the cleaning SQL
+        col = pending_clean_context.get("column")
+        method = intent_data.get("method", pending_clean_context.get("default_method", "mean"))
+        fill_value = None
+        
+        if method in ("mean", "avg", "average") and pending_clean_context.get("mean") is not None:
+            fill_value = pending_clean_context["mean"]
+        elif method in ("mode", "most_frequent") and pending_clean_context.get("mode") is not None:
+            fill_value = f"'{pending_clean_context['mode']}'"
+        elif method in ("median",) and pending_clean_context.get("mean") is not None:
+            fill_value = pending_clean_context["mean"]  # approximate with mean if no median cached
+        else:
+            fill_value = f"'{method}'"  # user typed a literal value
+        
+        clean_sql = f'UPDATE "{table_name}" SET "{col}" = {fill_value} WHERE "{col}" IS NULL'
+        print(f">>> [Clean Agent] Executing: {clean_sql}")
+        _, _, err = _safe_sql_execute(conn, clean_sql)
         conn.close()
         
-    if not context_rows:
-        return {"answer": "Your dataset is currently being processed by the AI in the background! Please wait approximately 3 minutes for the data to finish vectorizing before asking questions."}
+        if err:
+            return {"answer": f"❌ Cleaning failed for **{col}**: `{err}`\n\nYou may need to handle this manually."}
         
-    # 4. Groq response
-    client = Groq(api_key=os.environ['GROQ_API_KEY'])
-    prompt = f"User Question: {user_query}\n\nContext from Database:\n{json.dumps(context_rows, indent=2)}\n\nAnswer the question based ONLY on the context provided. Format your response beautifully using Markdown. Use bullet points for listing data fields, bold text for key names, and short paragraphs to make it highly readable and organized for a normal user."
+        return {
+            "answer": f"✅ **Done!** Filled **{pending_clean_context.get('count', '?')} missing values** in column `{col}` using **{method}**.\n\nThe data is now clean. Would you like me to check for more issues, or are you ready to **train the model**?",
+            "pending_clean": None
+        }
     
-    response = client.chat.completions.create(
-        messages=[{"role": "user", "content": prompt}],
-        model="llama-3.3-70b-versatile",
-        temperature=0.1
-    )
-    answer = response.choices[0].message.content.strip()
+    # INTENT: EDA — Text-to-SQL
+    sql, explanation = _generate_eda_sql(groq_client, user_query, table_name, schema)
+    
+    if not sql:
+        conn.close()
+        return {"answer": "I couldn't generate a valid SQL query for that question. Could you rephrase it? For example: *'How many missing values are in the Age column?'* or *'What is the average price?'*"}
+    
+    print(f">>> [EDA Agent] Generated SQL: {sql}")
+    cols, rows, err = _safe_sql_execute(conn, sql)
+    
+    if err:
+        conn.close()
+        return {"answer": f"⚠️ The query encountered an issue: `{err}`\n\nTry rephrasing your question!"}
+    
+    answer = _format_results_with_llm(groq_client, user_query, sql, cols, rows, explanation)
+    
+    # ─── Step 4: Proactive Data Quality Check ──────────────────────────────────
+    # After answering, silently check for data issues and offer to fix the worst one
+    pending_clean = None
+    quality_prompt_addition = ""
+    
+    try:
+        issues, total_rows = _check_data_quality(conn, table_name, schema)
+        if issues:
+            worst = max(issues, key=lambda x: x["count"])
+            col = worst["column"]
+            count = worst["count"]
+            pct = worst["pct"]
+            
+            if worst.get("mean") is not None:
+                method_hint = f"fill them with the **mean** ({worst['mean']}) or **median**"
+                default_method = "mean"
+            elif worst.get("mode") is not None:
+                method_hint = f"fill them with the **most frequent value** (`{worst['mode']}`) or mark as `Unknown`"
+                default_method = "mode"
+            else:
+                method_hint = "drop those rows"
+                default_method = "drop"
+            
+            quality_prompt_addition = f"\n\n---\n💡 **Data Quality Alert:** I noticed `{col}` has **{count} missing values** ({pct}% of {total_rows} rows). Want me to {method_hint}? Just say **yes** and specify the method, or **no** to handle it yourself."
+            
+            pending_clean = {
+                "column": col,
+                "count": count,
+                "mean": worst.get("mean"),
+                "mode": worst.get("mode"),
+                "default_method": default_method
+            }
+    except Exception as e:
+        print(f">>> [Quality Check] Failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    
     latency_ms = int((time.time() - start_time) * 1000)
     
     return {
-        "answer": answer, 
-        "context_used": context_rows,
-        "metrics": {
-            "latency_ms": latency_ms,
-            "active_indexes": active_indexes
-        }
+        "answer": answer + quality_prompt_addition,
+        "sql_executed": sql,
+        "metrics": {"latency_ms": latency_ms},
+        "pending_clean": pending_clean
     }
+
 
 
 # ═══════════════════════════════════════════════════════════════════
 # STAGE 8: AUTO-ML CODING AGENT  (Multi-Modal)
 # ═══════════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════
+# STAGE 8: AUTO-ML CODING AGENT  (Multi-Modal)
+# ═══════════════════════════════════════════════════════════════════
+
 
 IMAGE_EXTS  = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp'}
 AUDIO_EXTS  = {'.mp3', '.wav', '.flac', '.ogg', '.m4a', '.aac'}
@@ -706,8 +1060,11 @@ Our Lead Data Scientist's strategy:
 {strategy_plan}
 ----------
 {current_coder_extra}
-CRITICAL: Calculate a numeric performance metric and print "FINAL_METRIC: <numeric_value>" at the very end.
-Output ONLY raw Python code. No markdown. No ``` blocks. Pure executable Python only.
+CRITICAL REQUIREMENTS (follow in order):
+1. Calculate a numeric performance metric and print "FINAL_METRIC: <numeric_value>" at the very end.
+2. After training, serialize the FINAL trained model object to /tmp/model.pkl using joblib (preferred) or pickle.
+   Example: import joblib; joblib.dump(model, '/tmp/model.pkl')
+3. Output ONLY raw Python code. No markdown. No ``` blocks. Pure executable Python only.
 """
         print(">>> [Agent 2 — Coder] llama-3.3-70b-versatile (Groq)")
         coder_response = groq_client.chat.completions.create(
@@ -1178,6 +1535,27 @@ def lambda_handler(event, context):
                         
                     response = handle_automl_train(target, db_url, bucket, filename, job_id=job_id)
                     
+                    # ─── S3 Model Registry ───────────────────────────────────
+                    stream_status(job_id, bucket, "Publishing trained model to S3 Model Registry...")
+                    s3_model_url = publish_model_to_s3(bucket, target)
+                    if s3_model_url:
+                        response['s3_model_url'] = s3_model_url
+                        response['model_download_note'] = f"Model saved to {s3_model_url}"
+                    
+                    # ─── CockroachDB Experiment Tracker ──────────────────────
+                    stream_status(job_id, bucket, "Logging experiment metadata to CockroachDB...")
+                    metric_val = response.get('final_metric', 'N/A')
+                    reasoning_summary = response.get('nemotron_reasoning', '')
+                    rounds = response.get('rounds_taken', 1)
+                    try:
+                        from re import findall as re_findall
+                        nums = re_findall(r'[\d]*\.?[\d]+', str(metric_val))
+                        numeric_metric = float(nums[0]) if nums else None
+                    except Exception:
+                        numeric_metric = None
+                    log_experiment_to_cockroach(target, metric_val, numeric_metric, rounds, s3_model_url, reasoning_summary)
+                    response['experiment_tracked'] = True
+                    
                     # Save the final result to S3 for the frontend to poll!
                     try:
                         s3.put_object(Bucket=bucket, Key=f"jobs/{job_id}.json", Body=json.dumps(response))
@@ -1233,6 +1611,7 @@ def lambda_handler(event, context):
             # action == 'chat'
             user_query = body.get('query', '')
             bucket = body.get('bucket', '')
+            pending_clean_context = body.get('pending_clean', None)
             
             if not user_query or not bucket:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Missing query or bucket'})}
@@ -1244,7 +1623,7 @@ def lambda_handler(event, context):
             except Exception as e:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Could not find database state. Have you uploaded a dataset yet?'})}
                 
-            response = handle_agent_chat(user_query, db_url)
+            response = handle_agent_chat(user_query, db_url, pending_clean_context=pending_clean_context)
             
             return {
                 'statusCode': 200,
