@@ -938,6 +938,8 @@ function renderTrainingResult(data, col, s2) {
 }
 
 // CHAT
+let chatContext = [];
+
 async function sendMessage(){
   const q=queryInput.value.trim();
   if(!q||isThinking) return;
@@ -956,8 +958,13 @@ async function sendMessage(){
   thinkEl.className='msg msg-bot'; thinkEl.id='thinkBubble';
   thinkEl.innerHTML=`${BOT_AVT}<div class="msg-body"><div class="think-dots"><span></span><span></span><span></span></div></div>`;
   chatHistory.appendChild(thinkEl); chatHistory.scrollTop=chatHistory.scrollHeight;
+  
+  // Add user query to context
+  chatContext.push({role: 'user', content: q});
+  if (chatContext.length > 6) chatContext = chatContext.slice(-6); // Keep last 6 messages
+  
   try{
-    const payload = {action:'chat', query:q, bucket:getBucket()};
+    const payload = {action:'chat', query:q, bucket:getBucket(), history: chatContext};
     if(pendingCleanContext) payload.pending_clean = pendingCleanContext;
     
     const res=await fetch(getApiUrl(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -976,6 +983,11 @@ async function sendMessage(){
       isThinking=false; document.getElementById('sendBtn').classList.remove('sending');
       setTimeout(startTraining,600); return;
     }
+    
+    // Add bot response to context
+    const botText = data.answer || "API Error occurred";
+    chatContext.push({role: 'assistant', content: botText});
+    
     if(res.ok) appendBotMsg(data.answer, data.context_used);
     else appendBotMsg(`**API Error:** ${data.error||data.message||`HTTP ${res.status}`}`);
   }catch(err){

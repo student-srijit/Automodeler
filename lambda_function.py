@@ -539,7 +539,7 @@ def _safe_sql_execute(conn, sql, params=None):
         return None, None, str(e)
 
 
-def _classify_intent(groq_client, user_query):
+def _classify_intent(groq_client, user_query, history):
     """
     Classify user intent into one of:
     - 'train': user wants to train an ML model
@@ -586,7 +586,7 @@ Respond ONLY with a valid JSON object and nothing else. Examples:
         return {"intent": "eda"}
 
 
-def _generate_eda_sql(groq_client, user_query, schemas):
+def _generate_eda_sql(groq_client, user_query, schemas, history):
     """
     Generate a safe read-only SQL SELECT query for any EDA question.
     Returns (sql_string, explanation)
@@ -727,7 +727,8 @@ Rules:
     return resp.choices[0].message.content.strip()
 
 
-def handle_agent_chat(user_query, db_url, pending_clean_context=None):
+def handle_agent_chat(user_query, db_url, pending_clean_context=None, history=None):
+    if history is None: history = []
     """
     Intelligent EDA Chat Agent with Text-to-SQL, Data Cleaning Copilot, and ML Intent Routing.
     
@@ -768,7 +769,7 @@ def handle_agent_chat(user_query, db_url, pending_clean_context=None):
         schemas[t] = _get_table_schema(conn, t)
     
     # ─── Step 2: Classify Intent ────────────────────────────────────────────────
-    intent_data = _classify_intent(groq_client, user_query)
+    intent_data = _classify_intent(groq_client, user_query, history)
     intent = intent_data.get("intent", "eda")
     print(f">>> [Chat Agent] Intent: {intent_data}")
     
@@ -821,7 +822,7 @@ def handle_agent_chat(user_query, db_url, pending_clean_context=None):
         }
     
     # INTENT: EDA — Text-to-SQL
-    sql, explanation = _generate_eda_sql(groq_client, user_query, schemas)
+    sql, explanation = _generate_eda_sql(groq_client, user_query, schemas, history)
     
     if not sql:
         conn.close()
@@ -1626,6 +1627,7 @@ def lambda_handler(event, context):
             user_query = body.get('query', '')
             bucket = body.get('bucket', '')
             pending_clean_context = body.get('pending_clean', None)
+            history = body.get('history', [])
             
             if not user_query or not bucket:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Missing query or bucket'})}
@@ -1637,7 +1639,7 @@ def lambda_handler(event, context):
             except Exception as e:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Could not find database state. Have you uploaded a dataset yet?'})}
                 
-            response = handle_agent_chat(user_query, db_url, pending_clean_context=pending_clean_context)
+            response = handle_agent_chat(user_query, db_url, pending_clean_context=pending_clean_context, history=history)
             
             return {
                 'statusCode': 200,
