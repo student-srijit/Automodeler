@@ -16,7 +16,7 @@ import subprocess
 import traceback
 import time
 import base64
-from groq import Groq
+from openai import OpenAI
 import boto3
 
 s3 = boto3.client('s3')
@@ -290,13 +290,13 @@ OUTPUT FORMAT:
 }"""
 
 def generate_schema(profile):
-    client = Groq(api_key=os.environ['GROQ_API_KEY'])
+    client = OpenAI(base_url='https://openrouter.ai/api/v1', api_key=os.environ.get('OPENROUTER_API_KEY'))
     response = client.chat.completions.create(
         messages=[
             {"role": "system", "content": SCHEMA_PROMPT},
             {"role": "user",   "content": f"Generate normalized schema:\n{json.dumps(profile)}"}
         ],
-        model="llama-3.3-70b-versatile",
+        model="meta-llama/llama-3.3-70b-instruct",
         temperature=0.1,
         max_tokens=4096
     )
@@ -430,7 +430,7 @@ def embed_and_insert(schema, headers, transformed_rows, batch_size=500):
 # ═══════════════════════════════════════════════════════════════════
 
 def autonomous_test_and_optimize(schema, profile):
-    client        = Groq(api_key=os.environ['GROQ_API_KEY'])
+    client        = OpenAI(base_url='https://openrouter.ai/api/v1', api_key=os.environ.get('OPENROUTER_API_KEY'))
     primary_table = schema["tables"][0]["table_name"]
     col_names     = [c["column_name"] for c in profile["columns"]]
 
@@ -442,7 +442,7 @@ def autonomous_test_and_optimize(schema, profile):
             "role": "user",
             "content": f"Table: {primary_table}\nColumns: {json.dumps(col_names)}"
         }],
-        model="llama-3.3-70b-versatile",
+        model="meta-llama/llama-3.3-70b-instruct",
         temperature=0.2,
         max_tokens=1024
     )
@@ -564,7 +564,7 @@ Respond ONLY with a valid JSON object and nothing else. Examples:
             "role": "user",
             "content": user_query
         }],
-        model="llama-3.3-70b-versatile",
+        model="meta-llama/llama-3.3-70b-instruct",
         temperature=0.0,
         max_tokens=100
     )
@@ -617,7 +617,7 @@ Rules:
             "role": "user",
             "content": user_query
         }],
-        model="llama-3.3-70b-versatile",
+        model="meta-llama/llama-3.3-70b-instruct",
         temperature=0.0,
         max_tokens=512
     )
@@ -720,7 +720,7 @@ Rules:
             "role": "user",
             "content": f"Original Question: {user_query}\n\nSQL Results:\n{json.dumps(data_summary, indent=2)}"
         }],
-        model="llama-3.3-70b-versatile",
+        model="meta-llama/llama-3.3-70b-instruct",
         temperature=0.1,
         max_tokens=1024
     )
@@ -743,7 +743,7 @@ def handle_agent_chat(user_query, db_url, pending_clean_context=None):
     if db_url:
         os.environ["DATABASE_URL"] = db_url
 
-    groq_client = Groq(api_key=os.environ['GROQ_API_KEY'])
+    groq_client = OpenAI(base_url='https://openrouter.ai/api/v1', api_key=os.environ.get('OPENROUTER_API_KEY'))
     
     # ─── Step 1: Connect and find table ────────────────────────────────────────
     conn = None
@@ -1027,7 +1027,7 @@ def _run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time,
     Returns: best result across all rounds + full reasoning history
     """
     import io, sys
-    groq_client = Groq(api_key=os.environ['GROQ_API_KEY'])
+    groq_client = OpenAI(base_url='https://openrouter.ai/api/v1', api_key=os.environ.get('OPENROUTER_API_KEY'))
     
     best_result = None
     best_metric_val = -1.0
@@ -1043,12 +1043,12 @@ def _run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time,
         print(f"{'='*60}")
         
         # ── Agent 1: Analyst (DeepSeek-R1 on Groq — reasoning model for strategy) ──
-        print(">>> [Agent 1 — Analyst] deepseek-r1-distill-llama-70b (Groq)")
+        print(">>> [Agent 1 — Analyst] meta-llama/llama-3.3-70b-instruct (Groq)")
         stream_status(job_id, bucket, f"Agent 1 (Strategist): DeepSeek-R1 analyzing dataset for Round {round_num}...")
         try:
             analyst_response = groq_client.chat.completions.create(
                 messages=[{"role": "user", "content": current_analyst_prompt}],
-                model="deepseek-r1-distill-llama-70b",
+                model="meta-llama/llama-3.3-70b-instruct",
                 max_tokens=2048,
                 temperature=0.1
             )
@@ -1057,7 +1057,7 @@ def _run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time,
             print(f">>> DeepSeek-R1 failed ({e}), falling back to LLaMA 3.3 70B")
             analyst_response = groq_client.chat.completions.create(
                 messages=[{"role": "user", "content": current_analyst_prompt}],
-                model="llama-3.3-70b-versatile",
+                model="meta-llama/llama-3.3-70b-instruct",
                 max_tokens=2048,
                 temperature=0.1
             )
@@ -1080,10 +1080,10 @@ CRITICAL REQUIREMENTS (follow in order):
    Example: import joblib; joblib.dump(model, '/tmp/model.pkl')
 3. Output ONLY raw Python code. No markdown. No ``` blocks. Pure executable Python only.
 """
-        print(">>> [Agent 2 — Coder] llama-3.3-70b-versatile (Groq)")
+        print(">>> [Agent 2 — Coder] meta-llama/llama-3.3-70b-instruct (Groq)")
         coder_response = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": coder_prompt}],
-            model="llama-3.3-70b-versatile",
+            model="meta-llama/llama-3.3-70b-instruct",
             max_tokens=8192,
             temperature=0.05
         )
