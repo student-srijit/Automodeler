@@ -539,6 +539,17 @@ def _safe_sql_execute(conn, sql, params=None):
         return None, None, str(e)
 
 
+def _build_messages(system_prompt, history, user_query):
+    msgs = [{"role": "system", "content": system_prompt}]
+    if history:
+        for h in history:
+            role = "user" if h.get("role") == "user" else "assistant"
+            content = h.get("content", "")
+            if content:
+                msgs.append({"role": role, "content": content})
+    msgs.append({"role": "user", "content": user_query})
+    return msgs
+
 def _classify_intent(groq_client, user_query, history):
     """
     Classify user intent into one of:
@@ -548,9 +559,7 @@ def _classify_intent(groq_client, user_query, history):
     Returns dict with 'intent' and optional 'target' / 'action' / 'confirm'
     """
     resp = groq_client.chat.completions.create(
-        messages=[{
-            "role": "system",
-            "content": """You are an intent classifier for an AI data platform. Classify the user message into exactly one of:
+        messages=_build_messages("""You are an intent classifier for an AI data platform. Classify the user message into exactly one of:
 - "train": user wants to predict, train, or build a model for a specific column
 - "clean_action": user is responding to a data cleaning suggestion (approving, rejecting, or specifying a method)
 - "eda": user wants to explore data, ask statistics, find missing values, get distributions, etc.
@@ -559,11 +568,7 @@ Respond ONLY with a valid JSON object and nothing else. Examples:
 {"intent": "train", "target": "Price"}
 {"intent": "eda"}
 {"intent": "clean_action", "confirm": true, "method": "mean"}
-{"intent": "clean_action", "confirm": false}"""
-        }, {
-            "role": "user",
-            "content": user_query
-        }],
+{"intent": "clean_action", "confirm": false}""", history, user_query),
         model="meta-llama/llama-3.3-70b-instruct",
         temperature=0.0,
         max_tokens=100
@@ -598,9 +603,7 @@ def _generate_eda_sql(groq_client, user_query, schemas, history):
         schema_desc += "\n\n"
         
     resp = groq_client.chat.completions.create(
-        messages=[{
-            "role": "system",
-            "content": f"""You are a CockroachDB SQL expert. Generate ONLY a single safe, read-only SELECT query to answer the user's EDA question.
+        messages=_build_messages(f"""You are a CockroachDB SQL expert. Generate ONLY a single safe, read-only SELECT query to answer the user's EDA question.
 Available Schemas:
 {schema_desc}
 Rules:
@@ -612,11 +615,7 @@ Rules:
 6. For distributions: use GROUP BY with COUNT(*)
 7. Keep LIMIT ≤ 50 for row-fetching queries
 8. Column names with spaces must be quoted with double quotes
-9. Do NOT reference the 'embedding' column"""
-        }, {
-            "role": "user",
-            "content": user_query
-        }],
+9. Do NOT reference the 'embedding' column""", history, user_query),
         model="meta-llama/llama-3.3-70b-instruct",
         temperature=0.0,
         max_tokens=512
