@@ -629,17 +629,22 @@ Rules:
         max_tokens=512
     )
     raw = resp.choices[0].message.content.strip()
-    raw = re.sub(r'^```[a-z]*\n?', '', raw, flags=re.MULTILINE)
-    raw = re.sub(r'```\s*$', '', raw, flags=re.MULTILINE)
-    try:
-        parsed = json.loads(raw.strip())
-        return parsed.get("sql", ""), parsed.get("explanation", "")
-    except Exception:
-        # Try to extract raw SQL
-        sql_match = re.search(r'SELECT[\s\S]+?;', raw, re.IGNORECASE)
-        if sql_match:
-            return sql_match.group(), "Generated query"
-        return "", ""
+    
+    # Attempt to extract JSON block if the model included extra conversational text
+    json_match = re.search(r'\{[\s\S]*\}', raw)
+    if json_match:
+        try:
+            parsed = json.loads(json_match.group(0))
+            return parsed.get("sql", ""), parsed.get("explanation", "")
+        except Exception:
+            pass
+            
+    # Fallback to extracting raw SQL if JSON parsing fails completely
+    sql_match = re.search(r'(?:SELECT|INSERT|UPDATE|DELETE)[\s\S]+?(?:;|$)', raw, re.IGNORECASE)
+    if sql_match:
+        return sql_match.group().strip(), "Generated query"
+        
+    return "", ""
 
 
 def _check_data_quality(conn, table_name, schema):
