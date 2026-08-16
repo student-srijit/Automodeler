@@ -296,7 +296,7 @@ def generate_schema(profile):
             {"role": "system", "content": SCHEMA_PROMPT},
             {"role": "user",   "content": f"Generate normalized schema:\n{json.dumps(profile)}"}
         ],
-        model="meta-llama/llama-3.3-70b-instruct",
+        model="google/gemini-2.5-flash",
         temperature=0.1,
         max_tokens=4096
     )
@@ -442,7 +442,7 @@ def autonomous_test_and_optimize(schema, profile):
             "role": "user",
             "content": f"Table: {primary_table}\nColumns: {json.dumps(col_names)}"
         }],
-        model="meta-llama/llama-3.3-70b-instruct",
+        model="google/gemini-2.5-flash",
         temperature=0.2,
         max_tokens=1024
     )
@@ -577,7 +577,7 @@ Respond ONLY with a valid JSON object and nothing else. Examples:
 {"intent": "eda"}
 {"intent": "clean_action", "confirm": true, "method": "mean"}
 {"intent": "clean_action", "confirm": false}""", history, user_query),
-        model="meta-llama/llama-3.3-70b-instruct",
+        model="google/gemini-2.5-flash",
         temperature=0.0,
         max_tokens=100
     )
@@ -624,7 +624,7 @@ Rules:
 7. Keep LIMIT ≤ 50 for row-fetching queries
 8. Column names with spaces must be quoted with double quotes
 9. Do NOT reference the 'embedding' column""", history, user_query),
-        model="meta-llama/llama-3.3-70b-instruct",
+        model="google/gemini-2.5-flash",
         temperature=0.0,
         max_tokens=512
     )
@@ -733,7 +733,7 @@ Rules:
             "role": "user",
             "content": f"Original Question: {user_query}\n\nSQL Results:\n{json.dumps(data_summary, indent=2)}"
         }],
-        model="meta-llama/llama-3.3-70b-instruct",
+        model="google/gemini-2.5-flash",
         temperature=0.1,
         max_tokens=1024
     )
@@ -1084,7 +1084,7 @@ def _run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time,
         try:
             analyst_response = groq_client.chat.completions.create(
                 messages=[{"role": "user", "content": current_analyst_prompt}],
-                model="meta-llama/llama-3.3-70b-instruct",
+                model="google/gemini-2.5-flash",
                 max_tokens=2048,
                 temperature=0.1
             )
@@ -1093,7 +1093,7 @@ def _run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time,
             print(f">>> DeepSeek-R1 failed ({e}), falling back to LLaMA 3.3 70B")
             analyst_response = groq_client.chat.completions.create(
                 messages=[{"role": "user", "content": current_analyst_prompt}],
-                model="meta-llama/llama-3.3-70b-instruct",
+                model="google/gemini-2.5-flash",
                 max_tokens=2048,
                 temperature=0.1
             )
@@ -1119,7 +1119,7 @@ CRITICAL REQUIREMENTS (follow in order):
         print(">>> [Agent 2 — Coder] meta-llama/llama-3.3-70b-instruct (Groq)")
         coder_response = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": coder_prompt}],
-            model="meta-llama/llama-3.3-70b-instruct",
+            model="google/gemini-2.5-flash",
             max_tokens=8192,
             temperature=0.05
         )
