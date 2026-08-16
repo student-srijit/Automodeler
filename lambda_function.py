@@ -525,6 +525,13 @@ def _safe_sql_execute(conn, sql, params=None):
             if cur.description:
                 cols = [desc[0] for desc in cur.description]
                 rows = cur.fetchall()
+                
+                # Strip out 'embedding' column to prevent massive LLM context overflows
+                if 'embedding' in cols:
+                    emb_idx = cols.index('embedding')
+                    cols.pop(emb_idx)
+                    rows = [row[:emb_idx] + row[emb_idx+1:] for row in rows]
+                
                 # Serialize types
                 serialized_rows = []
                 for row in rows:
@@ -723,7 +730,11 @@ Rules:
         temperature=0.1,
         max_tokens=1024
     )
-    return resp.choices[0].message.content.strip()
+    try:
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        return f"AI Error formatting results: Could not process response from OpenRouter ({str(e)}). This is usually caused by the payload being too large."
+
 
 
 def handle_agent_chat(user_query, db_url, pending_clean_context=None, history=None):
