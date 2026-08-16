@@ -839,18 +839,36 @@ def handle_agent_chat(user_query, db_url, pending_clean_context=None, history=No
         }
     
     # INTENT: EDA — Text-to-SQL
-    sql, explanation = _generate_eda_sql(groq_client, user_query, schemas, history)
+    max_retries = 3
+    err = None
+    sql = ""
+    explanation = ""
+    cols = []
+    rows = []
     
-    if not sql:
-        conn.close()
-        return {"answer": "I couldn't generate a valid SQL query for that question. Could you rephrase it? For example: *'How many missing values are in the Age column?'* or *'What is the average price?'*"}
+    retry_history = history.copy() if history else []
     
-    print(f">>> [EDA Agent] Generated SQL: {sql}")
-    cols, rows, err = _safe_sql_execute(conn, sql)
-    
+    for attempt in range(max_retries):
+        sql, explanation = _generate_eda_sql(groq_client, user_query, schemas, retry_history)
+        
+        if not sql:
+            conn.close()
+            return {"answer": "I couldn't generate a valid SQL query for that question. Could you rephrase it? For example: *'How many missing values are in the Age column?'* or *'What is the average price?'*"}
+        
+        print(f">>> [EDA Agent] Generated SQL (Attempt {attempt+1}): {sql}")
+        cols, rows, err = _safe_sql_execute(conn, sql)
+        
+        if not err:
+            break
+            
+        print(f">>> [EDA Agent] SQL Error: {err}")
+        # Self-correction: feed error back to LLM to fix it
+        retry_history.append({"role": "assistant", "content": f'{{"sql": "{sql}", "explanation": "{explanation}"}}'})
+        retry_history.append({"role": "user", "content": f"The query encountered a SQL syntax or execution error: {err}. Please fix the query syntax (make sure to quote reserved words, match brackets correctly, etc) and try again."})
+        
     if err:
         conn.close()
-        return {"answer": f"⚠️ The query encountered an issue: `{err}`\n\nTry rephrasing your question!"}
+        return {"answer": f"⚠️ I tried to generate a query but encountered an issue: `{err}`\n\nI tried to auto-resolve it but failed. Try rephrasing your question!"}
     
     answer = _format_results_with_llm(groq_client, user_query, sql, cols, rows, explanation)
     
