@@ -9,19 +9,53 @@
 ![Groq](https://img.shields.io/badge/Groq-F55036.svg?style=flat&logo=groq&logoColor=white)
 ![OpenRouter](https://img.shields.io/badge/OpenRouter-000000.svg?style=flat)
 
+## Table of Contents
+
+* [Overview](#overview)
+* [Live Demo & Walkthrough](#live-demo--walkthrough)
+* [Architecture](#architecture)
+* [Infrastructure & Integrations](#infrastructure--integrations)
+  * [CockroachDB Tools Used](#cockroachdb-tools-used)
+  * [AWS Services Used](#aws-services-used)
+* [Features](#features)
+* [Pipeline](#pipeline)
+* [Why AutoModeler](#why-automodeler)
+  * [Agentic Memory](#agentic-memory)
+  * [CockroachDB Integration](#cockroachdb-integration)
+  * [Real-World Use Case](#real-world-use-case)
+  * [Production Considerations](#production-considerations)
+  * [What Makes the Architecture Different](#what-makes-the-architecture-different)
+* [Technology Stack](#technology-stack)
+* [Getting Started](#getting-started)
+  * [Prerequisites](#prerequisites)
+  * [Repository Setup](#repository-setup)
+  * [AWS Deployment](#aws-deployment)
+  * [Running the Frontend](#running-the-frontend)
+* [Configuration](#configuration)
+* [Usage](#usage)
+* [Repository Structure](#repository-structure)
+* [Documentation](#documentation)
+* [Limitations](#limitations)
+* [License](#license)
+
 ## Overview
 
 AutoModeler is a serverless data engineering and machine learning pipeline that processes raw CSV files uploaded to Amazon S3. Upon upload, the system autonomously profiles the data, generates exploratory data visualizations, synthesizes a database schema via an LLM, provisions a CockroachDB Serverless cluster, and embeds the rows for semantic vector search. It exposes a natural language RAG interface and an iterative machine learning agent to query and model the processed dataset.
 
+<image src='assets/home.png' width=450 style="border-radius: 12px">
+<image src='assets/eda.png' width=450 style="border-radius: 12px">
 
 ## Live Demo & Walkthrough
 
-**Try the app here:** [https://main.d1rb06txtu9pvr.amplifyapp.com/](https://main.d1rb06txtu9pvr.amplifyapp.com/)
+**Try the app here:** 
+[https://main.d1rb06txtu9pvr.amplifyapp.com/](https://main.d1rb06txtu9pvr.amplifyapp.com/)
 
 [![AutoModeler Demo Video](https://img.youtube.com/vi/YOUR_VIDEO_ID/maxresdefault.jpg)](https://www.youtube.com/watch?v=YOUR_VIDEO_ID)
 
-*(Replace `YOUR_VIDEO_ID` with your actual YouTube video ID)*
 
+## Architecture
+
+<image src='assets/pipeline.png' width=600 style="border-radius: 12px">
 
 ## Infrastructure & Integrations
 
@@ -58,28 +92,6 @@ AutoModeler is a serverless data engineering and machine learning pipeline that 
 - **Iterative ML Agent:** Generates, executes, and refines `scikit-learn` python code using an LLM reasoning loop.
 
 - **Semantic RAG Chat:** Allows natural language querying of the dataset using the `<->` KNN vector distance operator.
-
-## Architecture
-
-```mermaid
-graph TD
-    User((User)) -- Uploads CSV --> S3[Amazon S3]
-    S3 -- Event Notification --> Lambda[AWS Lambda]
-    
-    subgraph "Serverless Pipeline (AWS Lambda)"
-        Lambda -- ETL Route --> Pipeline[AutoModelerPipeline]
-        Lambda -- API Route --> Chat[IntelligentChatAgent]
-        Pipeline -- Generates DDL --> VE[VectorEngine]
-        Pipeline -- Executes ccloud --> CP[ClusterProvisioner]
-    end
-    
-    VE -- DDL & Insertions --> CDB[(CockroachDB Serverless)]
-    CP -- Provisioning --> CDB
-    Chat -- SQL & Vector Search --> CDB
-    
-    Pipeline -- LLM Prompts --> Groq[Groq API]
-    Chat -- Chat Context --> Groq
-```
 
 ## Pipeline
 
@@ -130,19 +142,30 @@ AutoModeler automates the highly manual data engineering workflow required to ma
 By simply uploading a CSV to S3, this system executes that entire lifecycle autonomously. It turns a static CSV into a fully provisioned, indexed, and vectorized database. This allows analysts to immediately begin natural-language data exploration (RAG) and iterative machine learning modeling (`scikit-learn` code generation) without writing infrastructure or pipeline code.
 
 ### Production Considerations
+
 The implementation addresses several baseline production concerns while acknowledging current limitations:
+
 - **Configuration:** Managed strictly via environment variables (API keys, regions) rather than hardcoded credentials.
+
 - **Idempotency:** Database inserts use conflict resolution (`ON CONFLICT`) to prevent duplicate data if the Lambda ETL triggers multiple times.
+
 - **Resource Constraints:** The `VectorEngine` intentionally caps processing at 500 rows to adhere to AWS Lambda's 15-minute maximum timeout and prevent Out-Of-Memory (OOM) crashes during the intensive local HuggingFace embedding phase.
+
 - **State Persistence:** Because AWS Lambda is stateless, critical infrastructure state (like the dynamically generated database URL) is persisted to Amazon S3.
+
 - **Limitations:** The system is built as a functional prototype. It currently lacks user authentication and access control. Additionally, the `AutoMLAgent` executes LLM-generated Python code using the native `exec()` function; while this relies on the inherently ephemeral and isolated nature of the AWS Lambda container for safety, it lacks a formal secure sandbox.
 
 ### What Makes the Architecture Different
+
 Unlike conventional LLM applications that rely on a static, pre-existing database and a separate dedicated vector database (e.g., Pinecone or Milvus), AutoModeler features a **dynamic infrastructure** approach paired with a **unified memory model**.
 
 1. **Dynamic Infrastructure:** The system provisions its own isolated database infrastructure (`ccloud` CLI) in real-time based purely on an S3 event trigger.
+
 2. **Unified Memory:** By utilizing CockroachDB for both strict relational data storage and distributed vector indexing, the agent avoids the synchronization complexity of maintaining separate relational and vector stores. The operational data *is* the semantic memory. 
+
 3. **Automated Tuning:** The architecture closes the loop on database administration by having the agent autonomously run `EXPLAIN` plans and tune its own indexes, an architectural pattern that goes beyond simple text-to-SQL generation.
+
+4. **Persistent Scalability vs. Ephemeral Sandboxes:** When you upload a CSV to ChatGPT, it loads the data into an ephemeral Python sandbox that vanishes when the chat ends. AutoModeler, conversely, provisions a **true persistent transactional database** (CockroachDB). This means the uploaded data is securely typed, indexed, vectorized, and made instantly available for simultaneous API access across a distributed system, rather than being trapped in a single user's chat session.
 
 ## Technology Stack
 
@@ -268,4 +291,5 @@ For detailed implementation specifics, database architecture, exact API flows, v
 
 ## License
 
-MIT License. See `LICENSE` for more information.
+MIT License. See [LICENSE](LICENSE) for more information.
+

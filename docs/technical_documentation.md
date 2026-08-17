@@ -8,33 +8,7 @@ AutoModeler is a serverless data engineering and machine learning pipeline that 
 
 The system relies on AWS Lambda as the primary compute environment, orchestrated by `pipeline.py`. Data is stored in Amazon S3 (raw files, generated plots, and state files) and CockroachDB (structured data and vectors). LLMs are utilized for schema generation, query optimization, machine learning reasoning loops, and chat interfaces.
 
-```mermaid
-graph TD
-    User((User)) -- Uploads CSV --> S3[Amazon S3]
-    S3 -- Event Trigger --> Entry[AWS Lambda<br/>lambda_function.py]
-    Entry -- S3 Upload Route --> Pipeline[AutoModelerPipeline<br/>pipeline.py]
-    Entry -- API Route --> Chat[IntelligentChatAgent<br/>core/chat_agent.py]
-    
-    subgraph "ETL Pipeline (pipeline.py)"
-        Pipeline --> DP[DataProfiler]
-        Pipeline --> VP[VisualProfiler]
-        Pipeline --> CP[ClusterProvisioner]
-        Pipeline --> SA[SchemaArchitect]
-        Pipeline --> VE[VectorEngine]
-        Pipeline --> DT[DataTransformer]
-        Pipeline --> QO[QueryOptimizer]
-    end
-    
-    Pipeline -. State & Plots .-> S3
-    VE -- DDL & Inserts --> CDB[(CockroachDB Serverless)]
-    CP -- ccloud CLI --> CDB
-    QO -- EXPLAIN / CREATE INDEX --> CDB
-    Chat -- SQL / Vector Search --> CDB
-    
-    SA -- Schema Prompt --> LLM[OpenAI Client<br/>Groq / OpenRouter]
-    QO -- Query Synth --> LLM
-    Chat -- Chat Prompt --> LLM
-```
+<image src='../assets/pipeline.png' width=500 style="border-radius: 12px">
 
 ## 3. Pipeline
 
@@ -196,7 +170,7 @@ The actual execution flow triggered by an S3 upload, managed sequentially by `Au
 
 - **Outputs:** JSON response containing natural language answers and optional graph URLs.
 
-- **Key methods:** `handle_agent_chat(...)`, `_classify_intent(...)`, `_format_results_with_llm(...)`
+- **Key methods:** `handle_agent_chat(...)`, `_clafy_intent(...)`, `_format_results_with_llm(...)`
 
 ## 5. External Services
 
