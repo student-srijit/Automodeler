@@ -79,9 +79,9 @@ class IntelligentChatAgent:
                     raise e
 
     @staticmethod
-    def _classify_intent(openrouter_client, user_query, history):
+    def _classify_intent(deepseek_client, user_query, history):
         resp = IntelligentChatAgent._api_call_with_retry(
-            client=openrouter_client,
+            client=deepseek_client,
             messages=IntelligentChatAgent._build_messages("""You are an intent classifier for an AI data platform. Classify the user message into exactly one of:
 - "train": user wants to predict, train, or build a model for a specific column
 - "clean_action": user is responding to a data cleaning suggestion (approving, rejecting, or specifying a method)
@@ -92,7 +92,7 @@ Respond ONLY with a valid JSON object and nothing else. Examples:
 {"intent": "eda"}
 {"intent": "clean_action", "confirm": true, "method": "mean"}
 {"intent": "clean_action", "confirm": false}""", history, user_query),
-            model="google/gemini-2.5-flash",
+            model="deepseek-chat",
             temperature=0.0,
             max_tokens=100
         )
@@ -111,7 +111,7 @@ Respond ONLY with a valid JSON object and nothing else. Examples:
             return {"intent": "eda"}
 
     @staticmethod
-    def _generate_eda_sql(openrouter_client, user_query, schemas, history):
+    def _generate_eda_sql(deepseek_client, user_query, schemas, history):
         schema_desc = ""
         for t_name, schema in schemas.items():
             schema_desc += f'Table: "{t_name}"\n'
@@ -119,7 +119,7 @@ Respond ONLY with a valid JSON object and nothing else. Examples:
             schema_desc += "\n\n"
             
         resp = IntelligentChatAgent._api_call_with_retry(
-            client=openrouter_client,
+            client=deepseek_client,
             messages=IntelligentChatAgent._build_messages(f"""You are a CockroachDB SQL expert. Generate ONLY a single safe SQL query to answer the user's question or fulfill their request.
 Available Schemas:
 {schema_desc}
@@ -133,7 +133,7 @@ Rules:
 7. Keep LIMIT ≤ 50 for row-fetching queries
 8. Column names with spaces must be quoted with double quotes
 9. Do NOT reference the 'embedding' column""", history, user_query),
-            model="google/gemini-2.5-flash",
+            model="deepseek-chat",
             temperature=0.0,
             max_tokens=512
         )
@@ -160,7 +160,7 @@ Rules:
         import re
         
         try:
-            openrouter_client = OpenAI(base_url='https://openrouter.ai/api/v1', api_key=os.environ.get('OPENROUTER_API_KEY'))
+            deepseek_client = OpenAI(base_url='https://api.deepseek.com', api_key=os.environ.get('DEEPSEEK_API_KEY'))
             
             prompt = f"""You are a Python data science plotting expert. Write a Python script using pandas, matplotlib, and seaborn to generate a plot for the user's request.
 User request: "{user_query}"
@@ -174,9 +174,9 @@ Requirements:
 5. If there are column name mismatches, print out the actual columns or just infer them. Assume standard naming.
 """
             resp = IntelligentChatAgent._api_call_with_retry(
-            client=openrouter_client,
+            client=deepseek_client,
             messages=[{"role": "user", "content": prompt}],
-            model="google/gemini-2.5-flash",
+            model="deepseek-chat",
             temperature=0.0,
             max_tokens=1000
         )
@@ -244,7 +244,7 @@ Requirements:
         return issues, total_rows
 
     @staticmethod
-    def _format_results_with_llm(openrouter_client, user_query, sql, cols, rows, explanation):
+    def _format_results_with_llm(deepseek_client, user_query, sql, cols, rows, explanation):
         is_dml = any(sql.strip().upper().startswith(kw) for kw in ['INSERT', 'UPDATE', 'DELETE'])
         if not rows and not cols and not is_dml:
             return "The query returned no results."
@@ -259,7 +259,7 @@ Requirements:
         }
         
         summary_resp = IntelligentChatAgent._api_call_with_retry(
-            client=openrouter_client,
+            client=deepseek_client,
             messages=[{
                 "role": "system",
                 "content": """You are a highly intelligent Data Scientist AI presenting database results to a user.
@@ -276,7 +276,7 @@ Rules:
                 "role": "user",
                 "content": f"Original Question: {user_query}\n\nSQL Results:\n{json.dumps(data_summary, indent=2)}"
             }],
-            model="google/gemini-2.5-flash",
+            model="deepseek-chat",
             temperature=0.1,
             max_tokens=1024
         )
@@ -294,7 +294,7 @@ Rules:
         if db_url:
             os.environ["DATABASE_URL"] = db_url
 
-        openrouter_client = OpenAI(base_url='https://openrouter.ai/api/v1', api_key=os.environ.get('OPENROUTER_API_KEY'))
+        deepseek_client = OpenAI(base_url='https://api.deepseek.com', api_key=os.environ.get('DEEPSEEK_API_KEY'))
         
         conn = None
         table_names = []
@@ -317,7 +317,7 @@ Rules:
         for t in table_names:
             schemas[t] = IntelligentChatAgent._get_table_schema(conn, t)
         
-        intent_data = IntelligentChatAgent._classify_intent(openrouter_client, user_query, history)
+        intent_data = IntelligentChatAgent._classify_intent(deepseek_client, user_query, history)
         intent = intent_data.get("intent", "eda")
         print(f">>> [Chat Agent] Intent: {intent_data}")
         
@@ -370,7 +370,7 @@ Rules:
         retry_history = history.copy() if history else []
         
         for attempt in range(max_retries):
-            sql, explanation = IntelligentChatAgent._generate_eda_sql(openrouter_client, user_query, schemas, retry_history)
+            sql, explanation = IntelligentChatAgent._generate_eda_sql(deepseek_client, user_query, schemas, retry_history)
             if not sql:
                 conn.close()
                 return {"answer": "I couldn't generate a valid SQL query for that question. Could you rephrase it? For example: *'How many missing values are in the Age column?'* or *'What is the average price?'*"}
@@ -386,7 +386,7 @@ Rules:
             conn.close()
             return {"answer": f"⚠️ I tried to generate a query but encountered an issue: `{err}`\n\nI tried to auto-resolve it but failed. Try rephrasing your question!"}
         
-        answer = IntelligentChatAgent._format_results_with_llm(openrouter_client, user_query, sql, cols, rows, explanation)
+        answer = IntelligentChatAgent._format_results_with_llm(deepseek_client, user_query, sql, cols, rows, explanation)
         
         used_table = table_names[0]
         for t in table_names:
