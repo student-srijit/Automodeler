@@ -32,4 +32,16 @@ subprocess.run("docker tag automodeler-lambda:latest 324037324041.dkr.ecr.ap-sou
 print("5. Pushing Docker Image to AWS...")
 subprocess.run("docker push 324037324041.dkr.ecr.ap-southeast-1.amazonaws.com/automodeler-lambda:latest", shell=True, check=True)
 
+print("6. Updating AWS Lambda Function Code...")
+try:
+    lambda_client = boto3.client('lambda', region_name='ap-southeast-1')
+    lambda_client.update_function_code(
+        FunctionName='roy-lambda',
+        ImageUri='324037324041.dkr.ecr.ap-southeast-1.amazonaws.com/automodeler-lambda:latest'
+    )
+    print("Successfully triggered Lambda update!")
+except Exception as e:
+    print(f"Warning: Failed to automatically update Lambda function code: {e}")
+    print("You may need to update the image manually in the AWS Console.")
+
 print("ALL DONE SUCCESS!")

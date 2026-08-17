@@ -5,15 +5,14 @@ from openai import OpenAI
 
 class SchemaArchitect:
     SCHEMA_PROMPT = """You are an enterprise CockroachDB Data Architect AI.
-Given a CSV data profile JSON, design a fully normalized (3NF) CockroachDB relational schema.
+Given a CSV data profile JSON, design a CockroachDB schema.
 
 STRICT RULES:
-1. Use 'is_pk_candidate' and 'uniqueness_ratio' to assign PRIMARY KEYs.
-2. Use 'fk_relationship_hints' to detect relationships and DECOMPOSE into multiple tables when appropriate.
-3. Every table MUST include an `embedding VECTOR(768)` column at the end for semantic vector search.
-4. Include a CREATE VECTOR INDEX on the embedding column for EACH table.
-5. Include CREATE INDEX statements for each FK column.
-6. Apply NOT NULL where null_count == 0.
+1. Do NOT normalize the data. Generate exactly ONE single denormalized table containing ALL columns from the CSV profile.
+2. Use 'is_pk_candidate' and 'uniqueness_ratio' to assign PRIMARY KEYs. If none fit, you can add a synthetic primary key.
+3. The single table MUST include an `embedding VECTOR(768)` column at the end for semantic vector search.
+4. Include a CREATE VECTOR INDEX on the embedding column.
+5. Apply NOT NULL where null_count == 0.
 7. Map types: UUID->UUID, INT8->INT8, FLOAT8->FLOAT8, TIMESTAMPTZ->TIMESTAMPTZ, BOOL->BOOL, STRING->STRING.
 8. Output ONLY raw valid JSON. No markdown. No explanation.
 
