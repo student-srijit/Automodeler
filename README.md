@@ -42,8 +42,8 @@
 
 AutoModeler is a serverless data engineering and machine learning pipeline that processes raw CSV files uploaded to Amazon S3. Upon upload, the system autonomously profiles the data, generates exploratory data visualizations, synthesizes a database schema via an LLM, provisions a CockroachDB Serverless cluster, and embeds the rows for semantic vector search. It exposes a natural language RAG interface and an iterative machine learning agent to query and model the processed dataset.
 
-<image src='assets/home.png' width=400 style="border-radius: 12px">
-<image src='assets/eda.png' width=400 style="border-radius: 12px">
+<image src='assets/home.png' width=320 style="border-radius: 12px">
+<image src='assets/eda.png' width=360 style="border-radius: 12px">
 
 ## Live Demo & Walkthrough
 
