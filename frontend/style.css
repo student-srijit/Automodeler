@@ -10,29 +10,29 @@
    ---------------------------------------------------------- */
 :root {
     --void:          #000000;
-    --space:         #03030e;
-    --deep:          #05051a;
-    --panel-bg:      rgba(8, 8, 28, 0.93);
-    --panel-border:  rgba(123, 47, 255, 0.18);
-    --panel-hover:   rgba(123, 47, 255, 0.06);
+    --space:         #050505;
+    --deep:          #0a0a0a;
+    --panel-bg:      rgba(15, 15, 15, 0.93);
+    --panel-border:  rgba(255, 255, 255, 0.08);
+    --panel-hover:   rgba(255, 255, 255, 0.03);
 
-    --neon-violet:   #7B2FFF;
-    --neon-violet-l: #9B5FFF;
-    --neon-cyan:     #00F5FF;
-    --neon-cyan-d:   #00C4CC;
+    --neon-violet:   #007AFF;
+    --neon-violet-l: #409CFF;
+    --neon-cyan:     #00E5FF;
+    --neon-cyan-d:   #00B3CC;
     --neon-green:    #00FF9D;
     --neon-red:      #FF3D71;
     --neon-amber:    #FFB800;
 
-    --text-bright:   #F0EFFF;
-    --text-primary:  #C8C7E8;
-    --text-secondary:#7E7EA0;
-    --text-muted:    #3D3D60;
-    --text-code:     #9EF5FF;
+    --text-bright:   #FFFFFF;
+    --text-primary:  #E5E5E5;
+    --text-secondary:#999999;
+    --text-muted:    #555555;
+    --text-code:     #00E5FF;
 
-    --glow-violet:   0 0 20px rgba(123, 47, 255, 0.35);
-    --glow-cyan:     0 0 20px rgba(0, 245, 255, 0.25);
-    --glow-input:    0 0 0 2px rgba(123, 47, 255, 0.25), 0 0 20px rgba(123, 47, 255, 0.1);
+    --glow-violet:   0 0 20px rgba(0, 122, 255, 0.35);
+    --glow-cyan:     0 0 20px rgba(0, 229, 255, 0.25);
+    --glow-input:    0 0 0 2px rgba(0, 122, 255, 0.25), 0 0 20px rgba(0, 122, 255, 0.1);
 
     --topbar-h:      52px;
     --panel-w:       285px;
@@ -76,8 +76,8 @@ body {
 
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(123, 47, 255, 0.3); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(123, 47, 255, 0.6); }
+::-webkit-scrollbar-thumb { background: rgba(0, 122, 255, 0.3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 122, 255, 0.6); }
 
 svg {
     width: 16px;

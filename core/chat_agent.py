@@ -55,8 +55,33 @@ class IntelligentChatAgent:
         return msgs
 
     @staticmethod
+    def _api_call_with_retry(client, messages, model, temperature, max_tokens, response_format=None):
+        import time
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                kwargs = {
+                    "messages": messages,
+                    "model": model,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens
+                }
+                if response_format:
+                    kwargs["response_format"] = response_format
+                return client.chat.completions.create(**kwargs)
+            except Exception as e:
+                if "429" in str(e):
+                    print(f"Rate limited. Retrying attempt {attempt+1}/{max_retries}...")
+                    time.sleep(2)
+                    if attempt == max_retries - 1:
+                        raise e
+                else:
+                    raise e
+
+    @staticmethod
     def _classify_intent(groq_client, user_query, history):
-        resp = groq_client.chat.completions.create(
+        resp = IntelligentChatAgent._api_call_with_retry(
+            client=groq_client,
             messages=IntelligentChatAgent._build_messages("""You are an intent classifier for an AI data platform. Classify the user message into exactly one of:
 - "train": user wants to predict, train, or build a model for a specific column
 - "clean_action": user is responding to a data cleaning suggestion (approving, rejecting, or specifying a method)
@@ -67,7 +92,7 @@ Respond ONLY with a valid JSON object and nothing else. Examples:
 {"intent": "eda"}
 {"intent": "clean_action", "confirm": true, "method": "mean"}
 {"intent": "clean_action", "confirm": false}""", history, user_query),
-            model="google/gemini-2.5-flash",
+            model="groq/compound",
             temperature=0.0,
             max_tokens=100
         )
@@ -93,7 +118,8 @@ Respond ONLY with a valid JSON object and nothing else. Examples:
             schema_desc += "\n".join([f"  - {col} ({dtype})" for col, dtype in schema.items()])
             schema_desc += "\n\n"
             
-        resp = groq_client.chat.completions.create(
+        resp = IntelligentChatAgent._api_call_with_retry(
+            client=groq_client,
             messages=IntelligentChatAgent._build_messages(f"""You are a CockroachDB SQL expert. Generate ONLY a single safe SQL query to answer the user's question or fulfill their request.
 Available Schemas:
 {schema_desc}
@@ -107,7 +133,7 @@ Rules:
 7. Keep LIMIT ≤ 50 for row-fetching queries
 8. Column names with spaces must be quoted with double quotes
 9. Do NOT reference the 'embedding' column""", history, user_query),
-            model="google/gemini-2.5-flash",
+            model="groq/compound",
             temperature=0.0,
             max_tokens=512
         )
@@ -126,6 +152,54 @@ Rules:
             return sql_match.group().strip(), "Generated query"
             
         return "", ""
+
+    @staticmethod
+    def generate_dynamic_graph_from_csv(user_query, csv_url):
+        import os
+        from openai import OpenAI
+        import re
+        
+        try:
+            groq_client = OpenAI(base_url='https://api.groq.com/openai/v1', api_key=os.environ.get('GROQ_API_KEY'))
+            
+            prompt = f"""You are a Python data science plotting expert. Write a Python script using pandas, matplotlib, and seaborn to generate a plot for the user's request.
+User request: "{user_query}"
+
+Requirements:
+1. The dataset URL is available as a global variable `CSV_URL`. Load it exactly like this: `import pandas as pd; df = pd.read_csv(CSV_URL)`
+   (CRITICAL: Do NOT define or assign the CSV_URL variable in your code. It is already defined in the environment.)
+2. Generate the plot based on the user's request using the loaded `df`.
+3. Save the figure EXACTLY to: "/tmp/dynamic_plot.png"
+4. Do NOT use plt.show(). Do NOT include any ```python wrappers, just the raw code.
+5. If there are column name mismatches, print out the actual columns or just infer them. Assume standard naming.
+"""
+            resp = IntelligentChatAgent._api_call_with_retry(
+            client=groq_client,
+            messages=[{"role": "user", "content": prompt}],
+            model="groq/compound",
+            temperature=0.0,
+            max_tokens=1000
+        )
+            code = resp.choices[0].message.content.strip()
+            code = re.sub(r'^```[a-z]*\n?', '', code, flags=re.MULTILINE)
+            code = re.sub(r'```\s*$', '', code, flags=re.MULTILINE)
+            
+            try:
+                if os.path.exists("/tmp/dynamic_plot.png"):
+                    os.remove("/tmp/dynamic_plot.png")
+                exec_globals = globals().copy()
+                exec_globals['CSV_URL'] = csv_url
+                exec(code, exec_globals)
+                if os.path.exists("/tmp/dynamic_plot.png"):
+                    return True
+            except Exception as e:
+                print(f"Dynamic plot generation failed: {e}")
+                return False
+                
+            return False
+        except Exception as e:
+            print(f"Error in generate_dynamic_graph_from_csv: {e}")
+            return False
 
     @staticmethod
     def _check_data_quality(conn, table_name, schema):
@@ -184,7 +258,8 @@ Rules:
             "total_rows_returned": len(rows)
         }
         
-        resp = groq_client.chat.completions.create(
+        summary_resp = IntelligentChatAgent._api_call_with_retry(
+            client=groq_client,
             messages=[{
                 "role": "system",
                 "content": """You are a highly intelligent Data Scientist AI presenting database results to a user.
@@ -201,12 +276,12 @@ Rules:
                 "role": "user",
                 "content": f"Original Question: {user_query}\n\nSQL Results:\n{json.dumps(data_summary, indent=2)}"
             }],
-            model="google/gemini-2.5-flash",
+            model="groq/compound",
             temperature=0.1,
             max_tokens=1024
         )
         try:
-            return resp.choices[0].message.content.strip()
+            return summary_resp.choices[0].message.content.strip()
         except Exception as e:
             return f"AI Error formatting results: Could not process response from OpenRouter ({str(e)}). This is usually caused by the payload being too large."
 
@@ -219,7 +294,7 @@ Rules:
         if db_url:
             os.environ["DATABASE_URL"] = db_url
 
-        groq_client = OpenAI(base_url='https://openrouter.ai/api/v1', api_key=os.environ.get('OPENROUTER_API_KEY'))
+        groq_client = OpenAI(base_url='https://api.groq.com/openai/v1', api_key=os.environ.get('GROQ_API_KEY'))
         
         conn = None
         table_names = []

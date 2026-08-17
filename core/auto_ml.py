@@ -4,7 +4,7 @@ import time
 import re
 import boto3
 from openai import OpenAI
-from core.utils import stream_status, detect_modality, s3
+from core.utils import stream_status, detect_modality, s3, log_experiment_to_cockroach, publish_model_to_s3
 
 class AutoMLAgent:
     @staticmethod
@@ -89,7 +89,7 @@ Verdict rules:
     @staticmethod
     def run_reasoning_loop(analyst_prompt, coder_extra_context, bucket, start_time, target_column="target", max_rounds=3, job_id=None):
         import io, sys
-        groq_client = OpenAI(base_url='https://openrouter.ai/api/v1', api_key=os.environ.get('OPENROUTER_API_KEY'))
+        groq_client = OpenAI(base_url='https://api.groq.com/openai/v1', api_key=os.environ.get('GROQ_API_KEY'))
         best_result = None
         best_metric_val = -1.0
         rounds_history = []
@@ -107,7 +107,7 @@ Verdict rules:
             try:
                 analyst_response = groq_client.chat.completions.create(
                     messages=[{"role": "user", "content": current_analyst_prompt}],
-                    model="google/gemini-2.5-flash",
+                    model="groq/compound",
                     max_tokens=2048,
                     temperature=0.1
                 )
@@ -116,7 +116,7 @@ Verdict rules:
                 print(f">>> DeepSeek-R1 failed ({e}), falling back to LLaMA 3.3 70B")
                 analyst_response = groq_client.chat.completions.create(
                     messages=[{"role": "user", "content": current_analyst_prompt}],
-                    model="google/gemini-2.5-flash",
+                    model="groq/compound",
                     max_tokens=2048,
                     temperature=0.1
                 )
@@ -141,8 +141,8 @@ CRITICAL REQUIREMENTS (follow in order):
             print(">>> [Agent 2 — Coder] meta-llama/llama-3.3-70b-instruct (Groq)")
             coder_response = groq_client.chat.completions.create(
                 messages=[{"role": "user", "content": coder_prompt}],
-                model="google/gemini-2.5-flash",
-                max_tokens=8192,
+                model="groq/compound",
+                max_tokens=4096,
                 temperature=0.05
             )
             generated_code = coder_response.choices[0].message.content.strip()
@@ -274,6 +274,19 @@ Design a fresh strategy based on the recommended approach above.
         ]
         
         print(f"\n>>> REASONING LOOP COMPLETE: {len(rounds_history)} rounds, best metric={best['metric']}")
+        
+        print(">>> [Integration] Publishing model to S3 Registry...")
+        s3_model_url = publish_model_to_s3(bucket, target_column)
+        
+        print(">>> [Integration] Logging experiment to CockroachDB Tracker...")
+        log_experiment_to_cockroach(
+            target_column=target_column,
+            final_metric=best["metric"],
+            metric_value=best.get("metric_val", 0),
+            rounds_taken=len(rounds_history),
+            s3_model_url=s3_model_url,
+            reasoning_summary=best.get("nemotron_reasoning", "Accepted without review.")
+        )
         
         return {
             "status": "success",

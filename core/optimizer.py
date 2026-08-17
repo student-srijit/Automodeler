@@ -7,7 +7,7 @@ from core.vector_engine import VectorEngine
 class QueryOptimizer:
     @staticmethod
     def synthesize_and_tune(schema, profile):
-        client        = OpenAI(base_url='https://openrouter.ai/api/v1', api_key=os.environ.get('OPENROUTER_API_KEY'))
+        client        = OpenAI(base_url='https://api.groq.com/openai/v1', api_key=os.environ.get('GROQ_API_KEY'))
         primary_table = schema["tables"][0]["table_name"]
         col_names     = [c["column_name"] for c in profile["columns"]]
 
@@ -19,7 +19,7 @@ class QueryOptimizer:
                 "role": "user",
                 "content": f"Table: {primary_table}\nColumns: {json.dumps(col_names)}"
             }],
-            model="google/gemini-2.5-flash",
+            model="groq/compound",
             temperature=0.2,
             max_tokens=1024
         )

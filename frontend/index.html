@@ -11,22 +11,22 @@
 <style>
 :root {
   --void: #000000;
-  --deep: #05051a;
-  --panel-bg: rgba(8,8,28,0.93);
-  --panel-border: rgba(123,47,255,0.18);
-  --neon-violet: #7B2FFF;
-  --neon-violet-l: #9B5FFF;
-  --neon-cyan: #00F5FF;
+  --deep: #050505;
+  --panel-bg: rgba(15,15,15,0.93);
+  --panel-border: rgba(255,255,255,0.08);
+  --neon-violet: #007AFF;
+  --neon-violet-l: #409CFF;
+  --neon-cyan: #00E5FF;
   --neon-green: #00FF9D;
   --neon-red: #FF3D71;
   --neon-amber: #FFB800;
-  --text-bright: #F0EFFF;
-  --text-primary: #C8C7E8;
-  --text-secondary: #7E7EA0;
-  --text-muted: #3D3D60;
-  --text-code: #9EF5FF;
-  --glow-violet: 0 0 20px rgba(123,47,255,0.35);
-  --glow-input: 0 0 0 2px rgba(123,47,255,0.25), 0 0 20px rgba(123,47,255,0.1);
+  --text-bright: #FFFFFF;
+  --text-primary: #E5E5E5;
+  --text-secondary: #999999;
+  --text-muted: #555555;
+  --text-code: #00E5FF;
+  --glow-violet: 0 0 20px rgba(0,122,255,0.35);
+  --glow-input: 0 0 0 2px rgba(0,122,255,0.25), 0 0 20px rgba(0,122,255,0.1);
   --panel-w: 285px;
   --topbar-h: 52px;
   --font-head: 'Space Grotesk', system-ui, sans-serif;
@@ -51,8 +51,8 @@ body {
 
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(123,47,255,0.35); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(123,47,255,0.65); }
+::-webkit-scrollbar-thumb { background: rgba(0,122,255,0.35); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,122,255,0.65); }
 
 svg { width:16px; height:16px; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; fill:none; flex-shrink:0; }
 
@@ -460,6 +460,10 @@ svg { width:16px; height:16px; stroke:currentColor; stroke-width:2; stroke-linec
           <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
           <span>EXECUTE PIPELINE</span>
         </button>
+        <button class="cmd-btn cmd-btn-primary" onclick="openEDAModal()" style="margin-top: 8px;">
+          <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>
+          <span>VIEW EDA GRAPHS</span>
+        </button>
         <p class="pipeline-hint">Or type your intent in chat</p>
       </div>
 
@@ -551,6 +555,25 @@ svg { width:16px; height:16px; stroke:currentColor; stroke-width:2; stroke-linec
         <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         LAUNCH PIPELINE
       </button>
+    </div>
+  </div>
+</div>
+
+<!-- EDA MODAL -->
+<div class="modal-overlay" id="edaModalOverlay" onclick="closeEDAModalOnBackdrop(event)">
+  <div class="modal-glass" style="max-width: 800px; max-height: 85vh; display: flex; flex-direction: column;">
+    <div class="modal-head">
+      <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>
+      <span>EDA VISUALIZATIONS</span>
+      <button class="modal-close-btn" onclick="closeEDAModal()">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-chips" id="edaImagesContainer" style="display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; justify-content: center; overflow-y: auto;">
+        <div style="color:var(--text-muted); font-family:var(--font-mono); font-size:11px;">Loading graphs...</div>
+    </div>
+    <div class="modal-actions">
+      <button class="cmd-btn" onclick="closeEDAModal()">CLOSE</button>
     </div>
   </div>
 </div>
@@ -734,6 +757,13 @@ function removeFile(name){
 
 function updateUploadBtn(){ document.getElementById('uploadBtn').disabled=uploadedFiles.length===0; }
 
+async function computeFileHash(file) {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 // UPLOAD
 async function uploadAllFiles(){
   const apiUrl=getApiUrl(), bucket=getBucket();
@@ -746,10 +776,24 @@ async function uploadAllFiles(){
   for(const file of [...uploadedFiles]){
     const step=addStep('UPLOAD',`${file.name} &rarr; s3://${bucket}`);
     try{
-      const resUrl=await fetch(apiUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_upload_url',filename:file.name,bucket})});
+      const fileHash = await computeFileHash(file);
+      const resUrl=await fetch(apiUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_upload_url',filename:file.name,bucket,size:file.size,hash:fileHash})});
       const urlData=await resUrl.json();
       if(urlData.error){markStep(step,'error',`Auth failed: ${urlData.error}`);continue;}
-      const res=await fetch(urlData.url,{method:'PUT',body:file,headers:{'Content-Type':'application/octet-stream'}});
+      
+      if(urlData.status === 'exists') {
+          markStep(step,'done',`${file.name} already in S3 (hash verified).`);
+          uploadedDatasets.push({filename:file.name,bucket});
+          removeFile(file.name);
+          document.getElementById('datasetCount').textContent=uploadedDatasets.length;
+          toast('Dataset already verified! AI embedding in background...','success');
+          continue;
+      }
+      
+      const putHeaders = {'Content-Type':'application/octet-stream'};
+      if (fileHash) putHeaders['x-amz-meta-sha256'] = fileHash;
+      
+      const res=await fetch(urlData.url,{method:'PUT',body:file,headers:putHeaders});
       if(res.ok){
         markStep(step,'done',`${file.name} transmitted.`);
         uploadedDatasets.push({filename:file.name,bucket});
@@ -798,6 +842,47 @@ async function openColumnPicker(){
 
 function closeModal(){document.getElementById('modalOverlay').classList.remove('visible');}
 function closeModalOnBackdrop(e){if(e.target===document.getElementById('modalOverlay'))closeModal();}
+
+async function openEDAModal() {
+    const bucket = getBucket();
+    if(!bucket) {
+        toast('No bucket set!', 'error');
+        return;
+    }
+    const csv = uploadedDatasets.find(d => /\.(csv|tsv)$/i.test(d.filename));
+    const filename = csv ? csv.filename : null;
+    
+    document.getElementById('edaModalOverlay').classList.add('visible');
+    const container = document.getElementById('edaImagesContainer');
+    container.innerHTML = '<div style="color:var(--text-muted); font-family:var(--font-mono); font-size:11px;">Fetching from S3...</div>';
+    
+    try {
+        const res = await fetch(getApiUrl(), {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({action: 'get_eda_graphs', filename: filename, bucket: bucket})
+        });
+        const data = await res.json();
+        if(data.error) throw new Error(data.error);
+        if(!data.graphs || data.graphs.length === 0) {
+            container.innerHTML = '<div style="color:var(--text-muted); font-family:var(--font-mono); font-size:11px;">No EDA graphs found. Did the pipeline complete?</div>';
+            return;
+        }
+        
+        let html = '';
+        data.graphs.forEach(g => {
+            html += `<div style="background:rgba(0,0,8,0.95); border:1px solid var(--panel-border); border-radius:8px; padding:8px; text-align:center;">
+                <div style="color:var(--neon-violet-l); font-family:var(--font-mono); font-size:10px; margin-bottom:8px;">${escHtml(g.title)}</div>
+                <img src="${escHtml(g.url)}" style="max-width:320px; border-radius:4px;" />
+            </div>`;
+        });
+        container.innerHTML = html;
+    } catch(err) {
+        container.innerHTML = `<div style="color:var(--neon-red); font-family:var(--font-mono); font-size:11px;">Error: ${err.message}</div>`;
+    }
+}
+function closeEDAModal(){document.getElementById('edaModalOverlay').classList.remove('visible');}
+function closeEDAModalOnBackdrop(e){if(e.target===document.getElementById('edaModalOverlay'))closeEDAModal();}
 
 // TRAINING
 async function startTraining(){
@@ -979,6 +1064,25 @@ async function sendMessage(){
     document.getElementById('thinkBubble')?.remove();
     markStep(step,'done',`Response received${data.sql_executed ? ' (SQL executed)' : ''}`);
     
+    // Simulate streaming thoughts if they exist
+    if(data.thoughts && data.thoughts.length > 0) {
+      const thoughtMsg = document.createElement('div');
+      thoughtMsg.className = 'msg msg-bot';
+      thoughtMsg.innerHTML = `${BOT_AVT}<div class="msg-body"><details class="copilot-thought" open style="margin-bottom:12px; background:rgba(0,0,0,0.6); border:1px solid rgba(123,47,255,0.2); border-radius:6px; padding:8px 12px; font-family:var(--font-mono); font-size:11px; cursor:pointer;"><summary style="outline:none; color:var(--text-secondary);"><span style="color:var(--neon-cyan)">Reasoning process</span> <span class="pulsing-cursor" style="animation:blink 1s step-end infinite;">_</span></summary><div class="thought-content" id="thoughtFeed-${queryCountVal}" style="margin-top:8px; padding-left:12px; border-left:1px solid var(--neon-violet); color:var(--text-muted);"></div></details></div>`;
+      chatHistory.appendChild(thoughtMsg);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+      
+      const feed = document.getElementById(`thoughtFeed-${queryCountVal}`);
+      for(let t of data.thoughts) {
+         feed.innerHTML += `<div style="margin-bottom:4px;"><span style="color:var(--neon-violet)">[${t.time}]</span> ${escHtml(t.thought)}</div>`;
+         chatHistory.scrollTop = chatHistory.scrollHeight;
+         await new Promise(r => setTimeout(r, 400));
+      }
+      thoughtMsg.querySelector('.pulsing-cursor')?.remove();
+      const details = thoughtMsg.querySelector('details');
+      if (details) details.removeAttribute('open'); // collapse after finishing
+    }
+
     // Update pending clean context for multi-turn cleaning conversations
     if('pending_clean' in data) {
       pendingCleanContext = data.pending_clean;
@@ -989,6 +1093,29 @@ async function sendMessage(){
       document.getElementById('customColumnInput').value=data.target;
       isThinking=false; document.getElementById('sendBtn').classList.remove('sending');
       setTimeout(startTraining,600); return;
+    }
+    
+    if(data.intent==='view_graphs'){
+      let graphHtml = '';
+      if(data.graphs && data.graphs.length > 0) {
+          graphHtml = `<div class="eda-inline-carousel" style="display:flex; overflow-x:auto; gap:16px; margin-top:12px; padding-bottom:8px;">`;
+          data.graphs.forEach(g => {
+              graphHtml += `<div style="flex:0 0 auto; width:300px; background:rgba(0,0,8,0.5); border:1px solid rgba(123,47,255,0.15); border-radius:8px; padding:8px;">
+                  <div style="color:var(--neon-violet-l); font-family:var(--font-mono); font-size:11px; margin-bottom:8px; text-align:center;">${escHtml(g.title)}</div>
+                  <img src="${escHtml(g.url)}" style="width:100%; border-radius:4px;" />
+              </div>`;
+          });
+          graphHtml += `</div>`;
+      }
+      
+      const el=document.createElement('div');
+      el.className='msg msg-bot';
+      el.innerHTML=`${BOT_AVT}<div class="msg-body"><div class="msg-rendered">${marked.parse(data.answer || "Here are your visualizations:")}${graphHtml}</div></div>`;
+      chatHistory.appendChild(el);
+      chatHistory.scrollTop=chatHistory.scrollHeight;
+
+      isThinking=false; document.getElementById('sendBtn').classList.remove('sending');
+      return;
     }
     
     // Add bot response to context

@@ -1,6 +1,6 @@
 numpy==1.26.4
-scipy
-scikit-learn
+scipy==1.13.1
+scikit-learn==1.4.2
 groq>=1.6.0
 psycopg2-binary
 sentence-transformers
@@ -11,6 +11,6 @@ openai
 librosa
 soundfile
 Pillow
-pandas
+pandas==2.2.2
 matplotlib
 seaborn

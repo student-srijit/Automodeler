@@ -33,13 +33,13 @@ OUTPUT FORMAT:
 
     @staticmethod
     def generate_schema(profile):
-        client = OpenAI(base_url='https://openrouter.ai/api/v1', api_key=os.environ.get('OPENROUTER_API_KEY'))
-        response = client.chat.completions.create(
+        groq_client = OpenAI(base_url='https://api.groq.com/openai/v1', api_key=os.environ.get('GROQ_API_KEY'))
+        response = groq_client.chat.completions.create(
             messages=[
                 {"role": "system", "content": SchemaArchitect.SCHEMA_PROMPT},
                 {"role": "user",   "content": f"Generate normalized schema:\n{json.dumps(profile)}"}
             ],
-            model="google/gemini-2.5-flash",
+            model="groq/compound",
             temperature=0.1,
             max_tokens=4096
         )

@@ -41,16 +41,29 @@ def lambda_handler(event, context):
             if action == 'get_upload_url':
                 filename = body.get('filename')
                 bucket = body.get('bucket')
+                file_hash = body.get('hash')
                 if not filename or not bucket:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Missing filename or bucket'})}
                 try:
+                    if file_hash:
+                        try:
+                            meta = s3.head_object(Bucket=bucket, Key=filename)
+                            if meta.get('Metadata', {}).get('sha256') == file_hash:
+                                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'status': 'exists'})}
+                        except Exception:
+                            pass
+
+                    params = {
+                        'Bucket': bucket,
+                        'Key': filename,
+                        'ContentType': 'application/octet-stream'
+                    }
+                    if file_hash:
+                        params['Metadata'] = {'sha256': file_hash}
+                        
                     url = s3.generate_presigned_url(
                         ClientMethod='put_object',
-                        Params={
-                            'Bucket': bucket,
-                            'Key': filename,
-                            'ContentType': 'application/octet-stream'
-                        },
+                        Params=params,
                         ExpiresIn=3600
                     )
                     return {
@@ -61,6 +74,41 @@ def lambda_handler(event, context):
                 except Exception as e:
                     return {'statusCode': 500, 'headers': headers, 'body': json.dumps({'error': str(e)})}
             
+            if action == 'get_eda_graphs':
+                filename = body.get('filename')
+                bucket = body.get('bucket')
+                if not bucket:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Missing bucket'})}
+                try:
+                    if not filename:
+                        objs = s3.list_objects_v2(Bucket=bucket)
+                        csvs = [o for o in objs.get('Contents', []) if o['Key'].endswith('.csv') or o['Key'].endswith('.tsv')]
+                        if not csvs:
+                            return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'graphs': []})}
+                        csvs.sort(key=lambda x: x['LastModified'], reverse=True)
+                        filename = csvs[0]['Key']
+
+                    prefix = f"eda-output/{filename}/"
+                    objs = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+                    graphs = []
+                    for o in objs.get('Contents', []):
+                        if o['Key'].endswith('.png'):
+                            url = s3.generate_presigned_url(
+                                ClientMethod='get_object',
+                                Params={'Bucket': bucket, 'Key': o['Key']},
+                                ExpiresIn=3600
+                            )
+                            # Extract title from filename
+                            title = os.path.basename(o['Key']).replace('.png', '').replace('_', ' ').title()
+                            graphs.append({'title': title, 'url': url})
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'graphs': graphs})
+                    }
+                except Exception as e:
+                    return {'statusCode': 500, 'headers': headers, 'body': json.dumps({'error': str(e)})}
+
             if action == 'upload':
                 filename = body.get('filename')
                 content_b64 = body.get('content')
@@ -251,6 +299,90 @@ def lambda_handler(event, context):
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Could not find database state. Have you uploaded a dataset yet?'})}
                 
             response = IntelligentChatAgent.handle_agent_chat(user_query, db_url, pending_clean_context=pending_clean_context, history=history)
+            
+            # Fetch EDA graphs and inject into chat response
+            if response.get('intent') == 'view_graphs':
+                try:
+                    objs = s3.list_objects_v2(Bucket=bucket)
+                    csvs = [o for o in objs.get('Contents', []) if o['Key'].endswith('.csv') or o['Key'].endswith('.tsv')]
+                    if csvs:
+                        csvs.sort(key=lambda x: x['LastModified'], reverse=True)
+                        filename = csvs[0]['Key']
+                        prefix = f"eda-output/{filename}/"
+                        eda_objs = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+                        all_graphs = []
+                        for o in eda_objs.get('Contents', []):
+                            if o['Key'].endswith('.png'):
+                                url = s3.generate_presigned_url(
+                                    ClientMethod='get_object',
+                                    Params={'Bucket': bucket, 'Key': o['Key']},
+                                    ExpiresIn=3600
+                                )
+                                title = os.path.basename(o['Key']).replace('.png', '').replace('_', ' ').title()
+                                all_graphs.append({'title': title, 'url': url})
+                                
+                        # Intelligently filter graphs based on user query
+                        filtered_graphs = []
+                        try:
+                            from openai import OpenAI
+                            groq_client = OpenAI(api_key=os.environ.get('GROQ_API_KEY'), base_url="https://api.groq.com/openai/v1")
+                            graph_titles = [g['title'] for g in all_graphs]
+                            
+                            prompt = f"""User query: "{user_query}"
+Available graphs: {json.dumps(graph_titles)}
+
+Instructions:
+1. Analyze if the user is asking for a specific graph (e.g., "heatmap for survived vs fare", "violin plot for age") OR a general overview (e.g., "show me EDA plots", "visualizations").
+2. If specific: Find the best matching graph titles. For example, if they ask for a heatmap, "Correlation Heatmap" is the correct match. Do not include unrelated graphs. If no graph fits, use an empty list.
+3. If general: Select 3-5 of the most important graphs (e.g., Correlation Heatmap, and key distributions).
+4. Respond EXACTLY with this JSON format and nothing else:
+{{"is_specific": true, "titles": ["Title1"]}}
+"""
+                            
+                            llm_resp = groq_client.chat.completions.create(
+                                messages=[{"role": "user", "content": prompt}],
+                                model="groq/compound",
+                                temperature=0.0,
+                                response_format={"type": "json_object"}
+                            )
+                            raw = llm_resp.choices[0].message.content.strip()
+                            data_llm = json.loads(raw)
+                            chosen_titles = data_llm.get("titles", [])
+                            is_specific = data_llm.get("is_specific", False)
+                            
+                            filtered_graphs = [g for g in all_graphs if g['title'] in chosen_titles]
+                            
+                            if is_specific and not filtered_graphs:
+                                print(f"Attempting dynamic graph generation for: {user_query}")
+                                try:
+                                    key_obj = s3.get_object(Bucket=bucket, Key="agent_filename.txt")
+                                    original_csv_key = key_obj['Body'].read().decode('utf-8').strip()
+                                    csv_url = s3.generate_presigned_url(ClientMethod='get_object', Params={'Bucket': bucket, 'Key': original_csv_key}, ExpiresIn=3600)
+                                    
+                                    success = IntelligentChatAgent.generate_dynamic_graph_from_csv(user_query, csv_url)
+                                    if success:
+                                        import uuid
+                                        dyn_key = f"dynamic-eda/{uuid.uuid4().hex}.png"
+                                        s3.upload_file("/tmp/dynamic_plot.png", bucket, dyn_key)
+                                        url = s3.generate_presigned_url(ClientMethod='get_object', Params={'Bucket': bucket, 'Key': dyn_key}, ExpiresIn=3600)
+                                        filtered_graphs = [{'title': f"Dynamic: {user_query.title()}", 'url': url}]
+                                        response['answer'] = "I dynamically generated this custom plot for you based on the data!"
+                                    else:
+                                        response['answer'] = "I couldn't find that specific plot in the pre-generated EDA graphs, and dynamic generation failed."
+                                except Exception as e:
+                                    print(f"Dynamic graph prep failed: {e}")
+                                    response['answer'] = "I couldn't find that specific plot in the pre-generated EDA graphs, and dynamic generation failed."
+                            elif not is_specific and not filtered_graphs:
+                                filtered_graphs = all_graphs[:5]
+                                
+                        except Exception as e:
+                            print(f"LLM filtering failed: {e}")
+                            filtered_graphs = all_graphs[:5]
+                            
+                        response['graphs'] = filtered_graphs
+                except Exception as e:
+                    print(f"Error fetching inline graphs: {e}")
+                    pass
             
             return {
                 'statusCode': 200,
