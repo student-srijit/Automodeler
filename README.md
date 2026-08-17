@@ -1,13 +1,13 @@
 # AutoModeler
 
-![Python](https://img.shields.io/badge/python-3.11-3776AB.svg?style=flat&logo=python&logoColor=white)
-![AWS Lambda](https://img.shields.io/badge/AWS%20Lambda-FF9900.svg?style=flat&logo=AWS-Lambda&logoColor=white)
-![AWS S3](https://img.shields.io/badge/Amazon%20S3-569A31.svg?style=flat&logo=Amazon-S3&logoColor=white)
-![AWS Amplify](https://img.shields.io/badge/AWS%20Amplify-FF9900.svg?style=flat&logo=AWS-Amplify&logoColor=white)
-![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=flat&logo=docker&logoColor=white)
-![CockroachDB](https://img.shields.io/badge/CockroachDB-6933FF.svg?style=flat&logo=Cockroach%20Labs&logoColor=white)
-![Groq](https://img.shields.io/badge/Groq-F55036.svg?style=flat&logo=groq&logoColor=white)
-![OpenRouter](https://img.shields.io/badge/OpenRouter-000000.svg?style=flat)
+![Python](https://img.shields.io/badge/python-3.11-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)
+![AWS Lambda](https://img.shields.io/badge/AWS%20Lambda-FF9900.svg?style=for-the-badge&logo=AWS-Lambda&logoColor=white)
+![AWS S3](https://img.shields.io/badge/Amazon%20S3-569A31.svg?style=for-the-badge&logo=Amazon-S3&logoColor=white)
+![AWS Amplify](https://img.shields.io/badge/AWS%20Amplify-FF9900.svg?style=for-the-badge&logo=AWS-Amplify&logoColor=white)
+![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)
+![CockroachDB](https://img.shields.io/badge/CockroachDB-6933FF.svg?style=for-the-badge&logo=Cockroach%20Labs&logoColor=white)
+![Groq](https://img.shields.io/badge/Groq-F55036.svg?style=for-the-badge&logo=groq&logoColor=white)
+![OpenRouter](https://img.shields.io/badge/OpenRouter-000000.svg?style=for-the-badge)
 
 ## Table of Contents
 
@@ -42,8 +42,8 @@
 
 AutoModeler is a serverless data engineering and machine learning pipeline that processes raw CSV files uploaded to Amazon S3. Upon upload, the system autonomously profiles the data, generates exploratory data visualizations, synthesizes a database schema via an LLM, provisions a CockroachDB Serverless cluster, and embeds the rows for semantic vector search. It exposes a natural language RAG interface and an iterative machine learning agent to query and model the processed dataset.
 
-<image src='assets/home.png' width=450 style="border-radius: 12px">
-<image src='assets/eda.png' width=450 style="border-radius: 12px">
+<image src='assets/home.png' width=400 style="border-radius: 12px">
+<image src='assets/eda.png' width=400 style="border-radius: 12px">
 
 ## Live Demo & Walkthrough
 

@@ -5,14 +5,15 @@ from openai import OpenAI
 
 class SchemaArchitect:
     SCHEMA_PROMPT = """You are an enterprise CockroachDB Data Architect AI.
-Given a CSV data profile JSON, design a CockroachDB schema.
+Given a CSV data profile JSON, design a fully normalized (3NF) CockroachDB relational schema.
 
 STRICT RULES:
-1. Do NOT normalize the data. Generate exactly ONE single denormalized table containing ALL columns from the CSV profile.
-2. Use 'is_pk_candidate' and 'uniqueness_ratio' to assign PRIMARY KEYs. If none fit, you can add a synthetic primary key.
-3. The single table MUST include an `embedding VECTOR(768)` column at the end for semantic vector search.
-4. Include a CREATE VECTOR INDEX on the embedding column.
-5. Apply NOT NULL where null_count == 0.
+1. Use 'is_pk_candidate' and 'uniqueness_ratio' to assign PRIMARY KEYs.
+2. Use 'fk_relationship_hints' to detect relationships and DECOMPOSE into multiple tables when appropriate.
+3. Every table MUST include an `embedding VECTOR(768)` column at the end for semantic vector search.
+4. Include a CREATE VECTOR INDEX on the embedding column for EACH table.
+5. Include CREATE INDEX statements for each FK column.
+6. Apply NOT NULL where null_count == 0.
 7. Map types: UUID->UUID, INT8->INT8, FLOAT8->FLOAT8, TIMESTAMPTZ->TIMESTAMPTZ, BOOL->BOOL, STRING->STRING.
 8. Output ONLY raw valid JSON. No markdown. No explanation.
 
@@ -33,13 +34,13 @@ OUTPUT FORMAT:
 
     @staticmethod
     def generate_schema(profile):
-        groq_client = OpenAI(base_url='https://api.groq.com/openai/v1', api_key=os.environ.get('GROQ_API_KEY'))
-        response = groq_client.chat.completions.create(
+        client = OpenAI(base_url='https://openrouter.ai/api/v1', api_key=os.environ.get('OPENROUTER_API_KEY'))
+        response = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": SchemaArchitect.SCHEMA_PROMPT},
                 {"role": "user",   "content": f"Generate normalized schema:\n{json.dumps(profile)}"}
             ],
-            model="groq/compound",
+            model="google/gemini-2.5-flash",
             temperature=0.1,
             max_tokens=4096
         )

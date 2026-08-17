@@ -76,6 +76,6 @@ flowchart TD
     end
 
     P3 -- "ccloud cluster create" --> CDB
-    P6 -- "INSERT INTO / Embeddings" --> CDB
-    P7 -- "CREATE VECTOR INDEX" --> CDB
+    P6 -- "Execute Schema DDL & INSERTs" --> CDB
+    P7 -- "CREATE INDEX (B-Tree)" --> CDB
     ChatAgent -- "embedding <-> vector" --> CDB
