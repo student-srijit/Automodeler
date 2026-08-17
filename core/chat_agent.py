@@ -92,7 +92,7 @@ Respond ONLY with a valid JSON object and nothing else. Examples:
 {"intent": "eda"}
 {"intent": "clean_action", "confirm": true, "method": "mean"}
 {"intent": "clean_action", "confirm": false}""", history, user_query),
-            model="groq/compound",
+            model="llama-3.3-70b-versatile",
             temperature=0.0,
             max_tokens=100
         )
@@ -133,7 +133,7 @@ Rules:
 7. Keep LIMIT ≤ 50 for row-fetching queries
 8. Column names with spaces must be quoted with double quotes
 9. Do NOT reference the 'embedding' column""", history, user_query),
-            model="groq/compound",
+            model="llama-3.3-70b-versatile",
             temperature=0.0,
             max_tokens=512
         )
@@ -176,7 +176,7 @@ Requirements:
             resp = IntelligentChatAgent._api_call_with_retry(
             client=groq_client,
             messages=[{"role": "user", "content": prompt}],
-            model="groq/compound",
+            model="llama-3.3-70b-versatile",
             temperature=0.0,
             max_tokens=1000
         )
@@ -276,7 +276,7 @@ Rules:
                 "role": "user",
                 "content": f"Original Question: {user_query}\n\nSQL Results:\n{json.dumps(data_summary, indent=2)}"
             }],
-            model="groq/compound",
+            model="llama-3.3-70b-versatile",
             temperature=0.1,
             max_tokens=1024
         )
