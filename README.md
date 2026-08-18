@@ -58,7 +58,7 @@ AutoModeler is a serverless data engineering and machine learning pipeline that 
 **Try the app here:** 
 [https://main.d1rb06txtu9pvr.amplifyapp.com/](https://main.d1rb06txtu9pvr.amplifyapp.com/)
 
-[![AutoModeler Demo Video](https://img.youtube.com/vi/YOUR_VIDEO_ID/maxresdefault.jpg)](https://www.youtube.com/watch?v=YOUR_VIDEO_ID)
+[![AutoModeler Demo Video](https://img.youtube.com/vi/YOUR_VIDEO_ID/maxresdefault.jpg)]([https://www.youtube.com/watch?v=YOUR_VIDEO_ID](https://youtu.be/T0uK3PMMRVM))
 
 
 ## Architecture
