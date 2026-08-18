@@ -5,7 +5,7 @@ from openai import OpenAI
 
 class SchemaArchitect:
     SCHEMA_PROMPT = """You are an enterprise CockroachDB Data Architect AI.
-Given a CSV data profile JSON, design a CockroachDB schema.
+Given a CSV data profile JSON, design a fully normalized (3NF) CockroachDB relational schema.
 
 STRICT RULES:
 1. Do NOT normalize the data. Generate exactly ONE single denormalized table containing ALL columns from the CSV profile.

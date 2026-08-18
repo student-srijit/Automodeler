@@ -38,3 +38,6 @@ log.json
 log.txt
 agent_filename.txt
 test_images/
+
+docs/piepeline.drawio
+docs/pipeline.mermaid

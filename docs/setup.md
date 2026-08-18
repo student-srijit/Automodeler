@@ -4,7 +4,7 @@ This guide walks you through deploying the Dual-Mode Agent architecture to AWS L
 
 ---
 
-## 🔑 1. Environment Variables & Keys
+## 1. Environment Variables & Keys
 
 To run the agent (either locally or on AWS), you will need these keys in your environment or `.env` file:
 
@@ -36,7 +36,7 @@ Used by your local testing scripts (`local_server.py`) to access S3. *Not requir
 
 ---
 
-## 🚀 2. AWS Lambda Deployment
+## 2. AWS Lambda Deployment
 
 ### Step A: Push the Code to AWS ECR
 Your AWS Lambda function runs inside a custom Docker container.
@@ -58,7 +58,7 @@ Your AWS Lambda function runs inside a custom Docker container.
 
 ---
 
-## ⚙️ 3. AWS Lambda Configuration
+## 3. AWS Lambda Configuration
 
 ### Memory & Timeout (Crucial for AI)
 1. Go to the **Configuration** tab -> **General configuration** -> **Edit**.
@@ -83,7 +83,7 @@ Your AWS Lambda function runs inside a custom Docker container.
 
 ---
 
-## 💻 4. Using the Agent
+## 4. Using the Agent
 1. Open `index.html` in your browser.
 2. Paste your **API Gateway URL** and **S3 Bucket Name**.
 3. Upload a CSV file!
