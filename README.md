@@ -8,6 +8,7 @@
 ![CockroachDB](https://img.shields.io/badge/CockroachDB-6933FF.svg?style=for-the-badge&logo=Cockroach%20Labs&logoColor=white)
 ![Groq](https://img.shields.io/badge/Groq-F55036.svg?style=for-the-badge&logo=groq&logoColor=white)
 ![OpenRouter](https://img.shields.io/badge/OpenRouter-000000.svg?style=for-the-badge)
+![Firebase](https://img.shields.io/badge/firebase-%23039BE5.svg?style=for-the-badge&logo=firebase&logoColor=white)
 
 ## Table of Contents
 
@@ -77,7 +78,13 @@ AutoModeler is a serverless data engineering and machine learning pipeline that 
 
 - **AWS Amplify:** Hosts the static Vanilla JavaScript/HTML frontend on a globally distributed CDN with automatic CI/CD deployments.
 
+### Authentication
+
+- **Firebase Authentication:** Secures user access using Google Sign-In with a professional, enterprise-grade popup integration on the "Get Started" page.
+
 ## Features
+
+- **Enterprise User Authentication:** Secure Google Sign-In flow powered by Firebase, ensuring a robust and isolated user workspace.
 
 - **Data Profiling:** Infers SQL data types and calculates descriptive statistics (quantiles, IQR, missing values).
 
