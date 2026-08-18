@@ -718,7 +718,7 @@ queryInput.addEventListener('input', function() { this.style.height='auto'; this
 queryInput.addEventListener('keydown', e => { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();} });
 
 // HELPERS
-function getApiUrl() { return CONFIG.API_URL || 'https://yw3775c3pk.execute-api.ap-south-1.amazonaws.com/prod/chat'; }
+function getApiUrl() { return CONFIG.API_URL || 'https://rhcjs5wvl37rdc7s2apuya32ae0cmsfs.lambda-url.ap-southeast-1.on.aws/'; }
 function getBucket() { return "automodeler-uploads-rimo-1234"; }
 function saveSettings() { } // Deprecated
 
