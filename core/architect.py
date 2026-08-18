@@ -13,7 +13,8 @@ STRICT RULES:
 3. The single table MUST include an `embedding VECTOR(768)` column at the end for semantic vector search.
 4. Include a CREATE VECTOR INDEX on the embedding column.
 5. Apply NOT NULL where null_count == 0.
-7. Map types: UUID->UUID, INT8->INT8, FLOAT8->FLOAT8, TIMESTAMPTZ->TIMESTAMPTZ, BOOL->BOOL, STRING->STRING.
+6. Map types appropriately. If a column has decimal values (like min/max) but is inferred as INT8, you MUST change its type to FLOAT8. Otherwise, map UUID->UUID, INT8->INT8, FLOAT8->FLOAT8, TIMESTAMPTZ->TIMESTAMPTZ, BOOL->BOOL, STRING->STRING.
+7. Do NOT quote column names in the CREATE TABLE statement.
 8. Output ONLY raw valid JSON. No markdown. No explanation.
 
 OUTPUT FORMAT:
@@ -33,13 +34,13 @@ OUTPUT FORMAT:
 
     @staticmethod
     def generate_schema(profile):
-        groq_client = OpenAI(base_url='https://api.groq.com/openai/v1', api_key=os.environ.get('GROQ_API_KEY'))
+        groq_client = OpenAI(base_url='https://openrouter.ai/api/v1', api_key=os.environ.get('OPENROUTER_API_KEY'))
         response = groq_client.chat.completions.create(
             messages=[
                 {"role": "system", "content": SchemaArchitect.SCHEMA_PROMPT},
                 {"role": "user",   "content": f"Generate normalized schema:\n{json.dumps(profile)}"}
             ],
-            model="groq/compound",
+            model="google/gemini-2.5-flash",
             temperature=0.1,
             max_tokens=4096
         )

@@ -10,7 +10,8 @@ class VectorEngine:
         if _model is None:
             from sentence_transformers import SentenceTransformer
             print("Loading embedding model (first cold start)...")
-            _model = SentenceTransformer('all-mpnet-base-v2')
+            model_path = os.environ.get('MODEL_PATH', 'all-mpnet-base-v2')
+            _model = SentenceTransformer(model_path)
         return _model
 
     @staticmethod
@@ -45,7 +46,6 @@ class VectorEngine:
 
     @staticmethod
     def embed_and_insert(schema, headers, transformed_rows, batch_size=500):
-        transformed_rows = transformed_rows[:500]  # Cap for RAG demo speed
         model         = VectorEngine.get_model()
         conn          = VectorEngine.get_db_conn()
         primary_table = schema["tables"][0]["table_name"]

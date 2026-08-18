@@ -14,3 +14,4 @@ Pillow
 pandas==2.2.2
 matplotlib
 seaborn
+google-auth

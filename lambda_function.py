@@ -28,8 +28,29 @@ def lambda_handler(event, context):
         # Support both REST API (v1) and HTTP API (v2) payload formats
         method = event.get('httpMethod') or event.get('requestContext', {}).get('http', {}).get('method')
         
+
         if method == 'OPTIONS':
             return {'statusCode': 200, 'headers': headers, 'body': ''}
+            
+        # Authentication Verification
+        headers_dict = event.get('headers', {})
+        auth_header = headers_dict.get('authorization') or headers_dict.get('Authorization')
+        
+        user_id = 'default_user'
+        firebase_project_id = os.environ.get('FIREBASE_PROJECT_ID', 'device-streaming-acd6bfae') # Use provided project ID
+        
+        if firebase_project_id:
+            if not auth_header or not auth_header.startswith('Bearer '):
+                return {'statusCode': 401, 'headers': headers, 'body': json.dumps({'error': 'Missing or invalid Authorization header'})}
+            token = auth_header.split(' ')[1]
+            try:
+                from google.oauth2 import id_token
+                from google.auth.transport import requests as google_requests
+                decoded_token = id_token.verify_firebase_token(token, google_requests.Request(), audience=firebase_project_id)
+                user_id = decoded_token['uid']
+            except Exception as e:
+                return {'statusCode': 401, 'headers': headers, 'body': json.dumps({'error': f'Invalid token: {str(e)}'})}
+
             
         try:
             raw_body = event.get('body') or '{}'

@@ -5,6 +5,7 @@ ENV HOME=/tmp
 ENV XDG_CACHE_HOME=/tmp
 ENV HF_HOME=/var/task/hf_cache
 ENV TORCH_HOME=/var/task/torch_cache
+ENV HF_HUB_DISABLE_PROGRESS_BARS=1
 
 # Install build tools, C-dependencies for audio/image processing, and tar/gzip (needed for ccloud)
 RUN yum install -y gcc gcc-c++ cmake libsndfile tar gzip zlib-devel libjpeg-devel && yum clean all
@@ -27,9 +28,9 @@ RUN pip install --upgrade pip --no-cache-dir && \
 # Install torchvision AFTER Pillow and Numpy are already installed via requirements.txt
 RUN pip install --no-cache-dir torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cpu
 
-# Pre-bake the embedding model into /var/task/hf_cache so cold starts are instant!
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-mpnet-base-v2')"
-
+ENV MODEL_PATH=/var/task/hf_model
+# Copy the pre-downloaded embedding model directly into the image
+COPY hf_model/ /var/task/hf_model/
 # Copy function code
 COPY lambda_function.py pipeline.py ${LAMBDA_TASK_ROOT}/
 COPY core/ ${LAMBDA_TASK_ROOT}/core/

@@ -86,10 +86,12 @@ class IntelligentChatAgent:
 - "train": user wants to predict, train, or build a model for a specific column
 - "clean_action": user is responding to a data cleaning suggestion (approving, rejecting, or specifying a method)
 - "eda": user wants to explore data, ask statistics, find missing values, get distributions, etc.
+- "view_graphs": user wants to view EDA plots, visual distributions, or generate a specific dynamic chart
 
 Respond ONLY with a valid JSON object and nothing else. Examples:
 {"intent": "train", "target": "Price"}
 {"intent": "eda"}
+{"intent": "view_graphs"}
 {"intent": "clean_action", "confirm": true, "method": "mean"}
 {"intent": "clean_action", "confirm": false}""", history, user_query),
             model="google/gemini-2.5-flash",
